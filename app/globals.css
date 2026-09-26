@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #060b16; color: #e7edf8; font-family: Arial, Helvetica, sans-serif; }
+.grid-bg { background-image: linear-gradient(rgba(56,189,248,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,.045) 1px, transparent 1px); background-size: 38px 38px; }
+.scan-line { background: linear-gradient(90deg, transparent, rgba(56,189,248,.8), transparent); }

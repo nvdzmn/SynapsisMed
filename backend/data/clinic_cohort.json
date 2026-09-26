@@ -1,0 +1,14 @@
+[
+  {"id":"PT-104","name":"Marcus Vance","age":58,"gender":"Male","conditions":["Type 2 Diabetes Mellitus","Heart Failure with Preserved EF (HFpEF)","Chronic Kidney Disease"],"metrics":{"eGFR":38,"HbA1c":8.4,"LVEF":52,"NT_proBNP":1420},"current_medications":["Metformin 1000mg","Lisinopril 20mg","Furosemide 40mg"]},
+  {"id":"PT-209","name":"Elena Rostova","age":64,"gender":"Female","conditions":["Refractory Plaque Psoriasis","Psoriatic Arthritis"],"metrics":{"PASI_Score":16.5,"eGFR":72,"CRP":14.2},"current_medications":["Methotrexate 15mg weekly"]},
+  {"id":"PT-312","name":"David Okafor","age":49,"gender":"Male","conditions":["Severe Uncontrolled Asthma","Eosinophilia"],"metrics":{"Blood_Eosinophils":480,"FEV1_Percent":61},"current_medications":["Fluticasone/Salmeterol","Montelukast 10mg"]},
+  {"id":"PT-405","name":"Sarah Jenkins","age":71,"gender":"Female","conditions":["Heart Failure","Chronic Kidney Disease Stage 3"],"metrics":{"eGFR":42,"LVEF":48},"current_medications":["Empagliflozin 10mg","Losartan 50mg"]},
+  {"id":"PT-508","name":"Michael Chang","age":53,"gender":"Male","conditions":["Hypertension","Dyslipidemia"],"metrics":{"eGFR":88,"LVEF":60},"current_medications":["Amlodipine 5mg"]},
+  {"id":"PT-617","name":"Anika Shah","age":39,"gender":"Female","conditions":["Eosinophilic Asthma","Atopic Dermatitis"],"metrics":{"Blood_Eosinophils":620,"FEV1_Percent":58},"current_medications":["Budesonide/Formoterol"]},
+  {"id":"PT-721","name":"Robert Cole","age":68,"gender":"Male","conditions":["Type 2 Diabetes Mellitus","Chronic Kidney Disease"],"metrics":{"eGFR":46,"HbA1c":7.9},"current_medications":["Insulin glargine"]},
+  {"id":"PT-834","name":"Camille Bernard","age":46,"gender":"Female","conditions":["Plaque Psoriasis"],"metrics":{"PASI_Score":11.2},"current_medications":["Topical calcipotriene"]},
+  {"id":"PT-912","name":"Noah Williams","age":55,"gender":"Male","conditions":["Severe Asthma"],"metrics":{"Blood_Eosinophils":350,"FEV1_Percent":64},"current_medications":["Mometasone/Formoterol"]},
+  {"id":"PT-023","name":"Grace Kim","age":62,"gender":"Female","conditions":["HFpEF","Obesity"],"metrics":{"eGFR":67,"LVEF":57},"current_medications":["Spironolactone 25mg"]},
+  {"id":"PT-145","name":"Omar Hassan","age":59,"gender":"Male","conditions":["Diabetic Kidney Disease"],"metrics":{"eGFR":34,"HbA1c":9.1},"current_medications":["Metformin 500mg"]},
+  {"id":"PT-268","name":"Victoria Lee","age":44,"gender":"Female","conditions":["Psoriatic Arthritis"],"metrics":{"CRP":10.1},"current_medications":["NSAID as needed"]}
+]
