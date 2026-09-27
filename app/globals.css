@@ -2,8 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; background: #060b16; color: #e7edf8; font-family: Arial, Helvetica, sans-serif; }
-.grid-bg { background-image: linear-gradient(rgba(56,189,248,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,.045) 1px, transparent 1px); background-size: 38px 38px; }
-.scan-line { background: linear-gradient(90deg, transparent, rgba(56,189,248,.8), transparent); }
+:root {
+  color-scheme: light;
+  --bg-canvas: #f5f7f9;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --border-default: #dde3e8;
+  --border-strong: #c4cad8;
+  --text-primary: #121933;
+  --text-secondary: #5b6478;
+  --text-muted: #7a8399;
+  --text-on-primary: #ffffff;
+  --action-primary: #6f4bd1;
+  --action-primary-press: #5b39c2;
+  --accent-surface: #e4f2f3;
+  --accent-text: #1f6a71;
+  --status-action-bg: #fff3dc;
+  --status-action-fg: #8a4b00;
+  --status-action-border: #f8c46b;
+  --status-blocked-bg: #fde8ea;
+  --status-blocked-fg: #a81e2e;
+  --status-blocked-border: #ff9aa3;
+  --status-cleared-bg: #eee9fb;
+  --status-cleared-fg: #4a2fa8;
+  --status-cleared-border: #d9cef6;
+  --neutral-100: #eef1f7;
+  --neutral-400: #9aa3bd;
+  --match-critical: #e5484d;
+  --match-high: #f5a524;
+  --match-moderate: #2e8a92;
+  --source-ink: #121933;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-inter), Inter, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 2px;
+}
+
+@keyframes voice-bar {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}

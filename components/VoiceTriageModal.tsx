@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Mic, MicOff, Radio, Sparkles, Volume2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { Patient, Study, VoiceSecretResponse } from "../lib/types";
+import type { Patient, Study, VoiceReportContext, VoiceSessionResponse } from "../lib/types";
 
 type VoiceEvent = {
   type?: string;
@@ -29,14 +29,39 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
 }
 
+function clientSecret(secret: VoiceSessionResponse["voice_secret"]): string | undefined {
+  if (!secret) return undefined;
+  if (typeof secret === "string") return secret;
+  if (secret.value) return secret.value;
+  if (typeof secret.client_secret === "string") return secret.client_secret;
+  return secret.client_secret?.value;
+}
+
+async function readJson(response: Response): Promise<VoiceSessionResponse> {
+  try {
+    return (await response.json()) as VoiceSessionResponse;
+  } catch {
+    return {};
+  }
+}
+
+function reportBrief(report?: VoiceReportContext): string {
+  if (!report) return "";
+  return [report.report_id ? `Physician report ${report.report_id}.` : "", report.sections?.question, report.sections?.literature, report.sections?.limitations, report.footer]
+    .filter(Boolean)
+    .join(" ");
+}
+
 type VoiceTriageModalProps = {
   patient?: Patient;
   study?: Study;
+  runId?: string;
+  onRunReady?: (runId: string) => void;
   onClose: () => void;
   apiUrl?: string;
 };
 
-export default function VoiceTriageModal({ patient, study, onClose, apiUrl = "http://localhost:8000" }: VoiceTriageModalProps) {
+export default function VoiceTriageModal({ patient, study, runId, onRunReady, onClose, apiUrl = "http://localhost:8000" }: VoiceTriageModalProps) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -77,17 +102,28 @@ export default function VoiceTriageModal({ patient, study, onClose, apiUrl = "ht
     playhead.current += buffer.duration;
   };
 
+  const ensureRun = async (): Promise<string> => {
+    if (runId) return runId;
+    setResponse("Starting a literature run so voice can use a completed report.");
+    const response = await fetch(`${apiUrl}/api/runs`, { method: "POST" });
+    const body = await readJson(response);
+    if (!response.ok) throw new Error(body.detail || "Could not start a literature run");
+    if (!body.run_id || body.status !== "complete") throw new Error(body.error || "Voice requires a completed report");
+    onRunReady?.(body.run_id);
+    return body.run_id;
+  };
+
   const connect = async () => {
     try {
       setError("");
-      const secretResponse = await fetch(`${apiUrl}/api/voice/session`, { method: "POST" });
-      if (!secretResponse.ok) {
-        const body = (await secretResponse.json()) as VoiceSecretResponse;
-        throw new Error(body.detail || "Could not create xAI voice session");
-      }
-      const secretData = (await secretResponse.json()) as VoiceSecretResponse;
-      const secret = secretData.value || (typeof secretData.client_secret === "string" ? secretData.client_secret : secretData.client_secret?.value);
+      const activeRunId = await ensureRun();
+      setResponse("Requesting a Grok Voice session for this report.");
+      const secretResponse = await fetch(`${apiUrl}/api/runs/${activeRunId}/voice/session`, { method: "POST" });
+      const secretData = await readJson(secretResponse);
+      if (!secretResponse.ok) throw new Error(secretData.detail || "Could not create xAI voice session");
+      const secret = clientSecret(secretData.voice_secret);
       if (!secret) throw new Error("xAI did not return a client secret");
+      const spokenInstructions = `${instructions} ${reportBrief(secretData.context?.report)}`.trim();
       const ws = new WebSocket("wss://api.x.ai/v1/realtime?model=grok-voice-latest", [`xai-client-secret.${secret}`]);
       wsRef.current = ws;
       ws.onopen = async () => {
@@ -99,7 +135,7 @@ export default function VoiceTriageModal({ patient, study, onClose, apiUrl = "ht
             type: "session.update",
             session: {
               voice: "eve",
-              instructions,
+              instructions: spokenInstructions,
               turn_detection: { type: "server_vad" },
               audio: {
                 input: {

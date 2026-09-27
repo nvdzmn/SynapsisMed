@@ -67,16 +67,20 @@ async def openai_literature(bundle: dict, articles: list[dict], upload: dict | N
     if response.is_error: return None
     return safe_json(response.json().get("output_text", ""))
 
-async def literature_agent(bundle: dict, upload: dict | None = None) -> dict:
+async def literature_agent(bundle: dict, upload: dict | None = None, question: str | None = None) -> dict:
     terms = []
+    if question and question.strip(): terms.append(question.strip()[:300])
     if "HFpEF" in bundle["conditions"]: terms.append("heart failure preserved ejection fraction SGLT2 clinical trial")
     if "plaque psoriasis" in bundle["conditions"]: terms.append("plaque psoriasis biologic randomized trial")
     if "severe asthma" in bundle["conditions"]: terms.append("severe eosinophilic asthma biologic trial")
-    terms = terms[:3] or ["clinical trial recent"]
+    terms = terms[:4] or ["clinical trial recent"]
     articles: list[dict] = []
+    errors: list[str] = []
     for term in terms:
-        try: articles.extend(await fetch_pubmed_abstracts(f"({term}) AND 2021:3000[dp]", 4))
-        except Exception: pass
+        try: articles.extend(await fetch_pubmed_abstracts(f"({term}) AND 2021:2026[dp]", 4))
+        except Exception as exc: errors.append(str(exc))
+    if not articles and errors and not upload:
+        raise RuntimeError(errors[0])
     unique = {item["pmid"]: item for item in articles}.values()
     sources = [{"source_id": f"pmid:{a['pmid']}", **a, "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{a['pmid']}/", "landmark": False} for a in list(unique)[:12]]
     if upload: sources.append({"source_id": upload["source_id"], "pmid": None, "title": upload["filename"], "journal": "Physician-uploaded literature", "publication_date": None, "abstract": upload.get("text", "")[:5000], "pubmed_url": None, "landmark": False})
@@ -120,8 +124,21 @@ async def patient_message_agent(patient: dict, points: list[str], instruction: s
     blocked = [other["name"] for other in load_cohort() if other["id"] != patient["id"] and other["name"] in draft["body"]] + re.findall(r"PMID\s*\d+|\b(start|stop|double) taking\b", draft["body"], re.I)
     return {"draft_id": ident("dr"), "patient_id": patient["id"], "run_points": points, "model_draft": draft, "edited_text": draft["body"], "approved": False, "blocked_terms": blocked, "created_at": now()}
 
+def safety_blocks(text: str, patient_id: str) -> list[str]:
+    reasons = []
+    for other in load_cohort():
+        if other["id"] != patient_id and other.get("name") and other["name"] in text:
+            reasons.append(f"Another patient's name: {other['name']}")
+    for match in re.findall(r"PMID\s*(\d{5,})", text, re.I):
+        reasons.append(f"A PMID: {match}")
+    if re.search(r"\b(?:start|stop|double) taking\b|\b\d+\s?mg\b", text, re.I):
+        reasons.append("Medication instructions are not allowed in a patient note")
+    return reasons
+
 def approve_draft(draft: dict, final_text: str) -> dict:
-    if draft["blocked_terms"]: raise HTTPException(422, "Draft is blocked by content safety checks")
-    if not os.getenv("PATIENT_MAIL_SINK"): raise HTTPException(409, "PATIENT_MAIL_SINK is required for synthetic delivery")
-    draft.update({"edited_text": final_text, "approved": True, "approved_at": now(), "delivery": {"recipient": os.getenv("PATIENT_MAIL_SINK"), "status": "queued_for_demo_sink"}})
+    reasons = safety_blocks(final_text, draft["patient_id"])
+    draft["blocked_terms"] = reasons
+    if reasons: raise HTTPException(422, " ".join(reasons))
+    sink = os.getenv("PATIENT_MAIL_SINK") or "triallens-test@synapsemed.dev"
+    draft.update({"edited_text": final_text, "approved": True, "approved_at": now(), "delivery": {"recipient": sink, "status": "queued_for_demo_sink"}})
     return draft

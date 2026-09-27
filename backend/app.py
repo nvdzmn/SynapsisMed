@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from pathlib import Path
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from services.pipeline import (approve_draft, cohort_agent, get_run, ident, literature_agent,
@@ -24,7 +25,7 @@ async def scheduled_runs():
     while True:
         stamp = __import__("datetime").datetime.now(__import__("datetime").UTC)
         if stamp.weekday() < 5 and stamp.hour >= 7 and stamp.date() != last_day:
-            await create_run(None, scheduled=True); last_day = stamp.date()
+            await launch_run(None, None, scheduled=True); last_day = stamp.date()
         await asyncio.sleep(3600)
 
 @asynccontextmanager
@@ -52,29 +53,44 @@ def extract_upload(file: UploadFile, content: bytes) -> dict:
     except Exception as exc: raise HTTPException(422, f"Could not read uploaded source: {exc}")
     return {"source_id": f"file:{ident('src')}", "filename": file.filename, "text": text}
 
-async def create_run(upload: dict | None, scheduled: bool = False) -> dict:
-    cohort = load_cohort(); bundle = phenotype_bundle(cohort)
-    run = {"run_id": ident("run"), "created_at": now(), "scheduled": scheduled, "status": "literature", "progress": ["phenotype_complete"], "phenotype_bundle": bundle, "upload": {"filename": upload["filename"]} if upload else None, "audit": {"agent_1_input": {"phenotype_bundle_id": bundle["phenotype_bundle_id"], "forbidden_identifiers_checked": True}, "agent_2_input": "pending", "agent_3_sessions": [], "agent_4_drafts": []}}
-    save_run(run)
+VIEW_FIELDS = ("run_id", "created_at", "completed_at", "scheduled", "status", "progress", "error", "overlay", "report", "source_pack")
+
+def public_run(run: dict) -> dict:
+    return {key: run.get(key) for key in VIEW_FIELDS}
+
+async def finish_run(run_id: str, upload: dict | None, question: str | None) -> None:
+    run = get_run(run_id)
+    cohort = load_cohort()
     try:
-        dossier = await literature_agent(bundle, upload); run.update({"status": "contrast", "dossier": dossier, "progress": run["progress"] + ["literature_complete"]}); save_run(run)
-        overlay, report = await cohort_agent(dossier, cohort); run["audit"]["agent_2_input"] = {"dossier_id": dossier["dossier_id"], "identified_synthetic_cohort": True}; run.update({"status": "complete", "overlay": overlay, "report": report, "source_pack": dossier["sources"], "progress": run["progress"] + ["contrast_complete", "report_complete"], "completed_at": now()})
-    except Exception as exc: run.update({"status": "failed", "error": str(exc), "completed_at": now()})
-    save_run(run); return run
+        dossier = await literature_agent(run["phenotype_bundle"], upload, question)
+        run.update({"status": "contrast", "dossier": dossier, "source_pack": dossier["sources"], "progress": run["progress"] + ["literature_complete"]})
+        save_run(run)
+        overlay, report = await cohort_agent(dossier, cohort)
+        run["audit"]["agent_2_input"] = {"dossier_id": dossier["dossier_id"], "identified_synthetic_cohort": True}
+        run.update({"status": "complete", "overlay": overlay, "report": report, "source_pack": dossier["sources"], "progress": run["progress"] + ["contrast_complete", "report_complete"], "completed_at": now()})
+    except Exception as exc:
+        run.update({"status": "failed", "error": str(exc), "completed_at": now()})
+    save_run(run)
+
+async def launch_run(upload: dict | None, question: str | None, scheduled: bool = False) -> dict:
+    cohort = load_cohort(); bundle = phenotype_bundle(cohort)
+    run = {"run_id": ident("run"), "created_at": now(), "scheduled": scheduled, "status": "literature", "progress": ["phenotype_complete"], "question": question, "phenotype_bundle": bundle, "upload": {"filename": upload["filename"]} if upload else None, "audit": {"agent_1_input": {"phenotype_bundle_id": bundle["phenotype_bundle_id"], "forbidden_identifiers_checked": True}, "agent_2_input": "pending", "agent_3_sessions": [], "agent_4_drafts": []}}
+    save_run(run)
+    asyncio.create_task(finish_run(run["run_id"], upload, question))
+    return run
 
 @app.get("/health")
 async def health(): return {"status": "ok", "cohort_size": len(load_cohort()), "synthetic": True}
 
 @app.post("/api/runs")
-async def start_run(file: UploadFile | None = File(None)):
-    upload = extract_upload(file, await file.read()) if file else None
-    return await create_run(upload)
+async def start_run(file: UploadFile | None = File(None), question: str | None = Form(None)):
+    upload = extract_upload(file, await file.read()) if file and file.filename else None
+    return public_run(await launch_run(upload, question))
 
 @app.get("/api/runs/{run_id}")
 async def read_run(run_id: str):
-    run = get_run(run_id)
     # No raw dossier or full cohort in the normal frontend contract.
-    return {key: run.get(key) for key in ("run_id", "created_at", "completed_at", "scheduled", "status", "progress", "error", "overlay", "report", "source_pack")}
+    return public_run(get_run(run_id))
 
 @app.post("/api/runs/{run_id}/voice/session")
 async def voice_session(run_id: str):
