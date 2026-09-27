@@ -46,6 +46,12 @@ def save_run(run: dict) -> None:
     with connection() as db:
         db.execute("INSERT INTO runs(run_id, created_at, status, payload) VALUES (?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, payload=excluded.payload", (run["run_id"], run["created_at"], run["status"], json.dumps(run)))
 
+def latest_completed_run() -> dict | None:
+    initialize()
+    with connection() as db:
+        row = db.execute("SELECT payload FROM runs WHERE status = 'complete' ORDER BY created_at DESC LIMIT 1").fetchone()
+    return json.loads(row["payload"]) if row else None
+
 def get_run(run_id: str) -> dict:
     initialize()
     with connection() as db:

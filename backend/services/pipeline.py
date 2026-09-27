@@ -90,6 +90,15 @@ async def literature_agent(bundle: dict, upload: dict | None = None, question: s
     findings = model_output.get("findings", fallback) if model_output else fallback
     return {"dossier_version": "1.0", "dossier_id": ident("ed"), "generated_at": now(), "phenotype_bundle_id": bundle["phenotype_bundle_id"], "retrieval": {"source": "ncbi_pubmed_eutilities", "window": {"from": "2021-01-01", "to": datetime.now().date().isoformat()}, "queries": [{"query_id": f"q{i+1}", "term": term, "result_count": len(sources), "pmids_fetched": [s["pmid"] for s in sources if s["pmid"]], "pmids_omitted": []} for i, term in enumerate(terms)]}, "sources": sources, "findings": findings, "applicability_hints": [], "gaps": ["This is literature surveillance, not a treatment or enrollment determination."]}
 
+def placeholder_dossier(bundle: dict, question: str | None, reason: str, terms: list[str]) -> dict:
+    sources = [
+        {"source_id": "pmid:34449189", "pmid": "34449189", "title": "EMPEROR-Preserved", "journal": "NEJM", "publication_date": "2021", "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/34449189/", "landmark": True, "abstract": "Empagliflozin in heart failure with preserved ejection fraction (HFpEF). Patients with heart failure and a range of kidney function were studied.", "key_findings": "Fewer heart failure hospitalizations when ejection fraction is preserved."},
+        {"source_id": "pmid:36027570", "pmid": "36027570", "title": "DELIVER", "journal": "NEJM", "publication_date": "2022", "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/36027570/", "landmark": True, "abstract": "Dapagliflozin in heart failure with mildly reduced or preserved ejection fraction. Outcomes were assessed across eGFR strata in HFpEF.", "key_findings": "Heart failure events were lower across the ejection-fraction range studied."},
+        {"source_id": "pmid:36331190", "pmid": "36331190", "title": "EMPA-KIDNEY", "journal": "NEJM", "publication_date": "2023", "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/36331190/", "landmark": True, "abstract": "Empagliflozin in chronic kidney disease. Kidney outcomes were studied down to a low eGFR, including people with and without heart failure.", "key_findings": "Kidney disease progression was lower across a wide eGFR range."},
+    ]
+    findings = [{"finding_id": "f1", "statement": "Sample literature: SGLT2 inhibitor trials in heart failure with preserved ejection fraction and in chronic kidney disease. Not retrieved live from PubMed.", "design": "other", "population": "HFpEF and CKD trial populations described in the sample sources.", "intervention_or_exposure": "SGLT2 inhibitor", "comparator": "Placebo", "outcome": "Heart failure events and kidney disease progression", "direction": "uncertain", "effect": {"measure": None, "value": None, "interval": None, "as_reported": False, "source_quote": ""}, "source_ids": [source["source_id"] for source in sources], "limitations": "These sources are a fixed stand-in so the rest of the workspace can be tested.", "conflicts_with": []}]
+    return {"dossier_version": "1.0", "dossier_id": ident("ed"), "generated_at": now(), "phenotype_bundle_id": bundle["phenotype_bundle_id"], "retrieval": {"source": "placeholder", "placeholder_reason": reason, "question": question, "window": {"from": "2021-01-01", "to": datetime.now().date().isoformat()}, "queries": [{"query_id": f"q{i+1}", "term": term, "result_count": 0, "pmids_fetched": [], "pmids_omitted": []} for i, term in enumerate(terms)]}, "sources": sources, "findings": findings, "applicability_hints": [], "gaps": ["This dossier is a sample for testing, not a live PubMed retrieval."]}
+
 def deterministic_overlay(dossier: dict, cohort: list[dict]) -> dict:
     text = " ".join([s.get("title", "") + " " + s.get("abstract", "") for s in dossier["sources"]]).lower(); result = []
     for person in cohort:
@@ -101,17 +110,38 @@ def deterministic_overlay(dossier: dict, cohort: list[dict]) -> dict:
         result.append({"patient_id": person["id"], "display_name": person["name"], "risk_level": risk, "finding_ids": ["f1"] if risk else [], "reasons": reasons, "mismatches": ["Trial enrollment criteria are not fully visible in this synthetic chart."] if risk else [], "clinician_note": "Review whether the cited population is close enough to matter at the next visit." if risk else None})
     return {"overlay_id": ident("ov"), "dossier_id": dossier["dossier_id"], "patients": result}
 
+def response_text(payload: dict) -> str:
+    if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
+        return payload["output_text"]
+    chunks = []
+    for item in payload.get("output") or []:
+        for part in item.get("content") or []:
+            if part.get("text"): chunks.append(part["text"])
+    return "\n".join(chunks)
+
 async def grok_json(prompt: str) -> dict | None:
+    from services.xai import load_local_env
+    load_local_env()
     key = os.getenv("XAI_API_KEY")
     if not key: return None
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post("https://api.x.ai/v1/responses", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": "grok-4.7", "input": prompt})
-    return safe_json(response.json().get("output_text", "")) if response.is_success else None
+    if response.is_error: return None
+    return safe_json(response_text(response.json()))
+
+def report_sections(dossier: dict, overlay: dict) -> dict:
+    matched = [p for p in overlay["patients"] if p["risk_level"]]
+    if (dossier.get("retrieval") or {}).get("source") != "placeholder":
+        return {"question": "The run assessed anonymized condition and biomarker patterns in a synthetic panel.", "literature": "Findings are limited to the sources attached to this run.", "limitations": "Evidence matching is a review prompt, not a treatment recommendation.", "patients": matched, "sources": dossier["sources"]}
+    asked = ((dossier.get("retrieval") or {}).get("question") or "").strip() or "Does recent evidence support SGLT2 inhibitors for patients with heart failure, preserved ejection fraction, and CKD?"
+    return {"question": asked, "literature": "Fewer heart failure hospitalizations or cardiovascular deaths when ejection fraction is above 40%.\nBenefit held across eGFR down to about 20–25 in the trial populations.", "limitations": "A mortality benefit on its own.\nUse below eGFR 20, on dialysis, or in type 1 diabetes.", "patients": matched, "sources": dossier["sources"]}
 
 async def cohort_agent(dossier: dict, cohort: list[dict]) -> tuple[dict, dict]:
     overlay = deterministic_overlay(dossier, cohort)
-    report = {"report_id": ident("rp"), "dossier_id": dossier["dossier_id"], "generated_at": now(), "sections": {"question": "The run assessed anonymized condition and biomarker patterns in a synthetic panel.", "literature": "Findings are limited to the sources attached to this run.", "limitations": "Evidence matching is a review prompt, not a treatment recommendation.", "patients": [p for p in overlay["patients"] if p["risk_level"]], "sources": dossier["sources"]}, "footer": "Decision support from synthetic records; not a treatment recommendation."}
-    prompt = "Return JSON with a concise academic panel report. Never prescribe. Use only this dossier and cohort. " + json.dumps({"dossier": dossier, "overlay": overlay})
+    placeholder = (dossier.get("retrieval") or {}).get("source") == "placeholder"
+    footer = "Synthetic records. Sample sources, not a live PubMed search. Decision support, not a treatment recommendation." if placeholder else "Decision support from synthetic records; not a treatment recommendation."
+    report = {"report_id": ident("rp"), "dossier_id": dossier["dossier_id"], "generated_at": now(), "placeholder": placeholder, "sections": report_sections(dossier, overlay), "footer": footer}
+    prompt = "Return JSON only with keys title, question, supports (array of strings), and does_not_support (array of strings). Never prescribe. Use only this dossier and matched patients. " + json.dumps({"dossier": {"sources": dossier.get("sources"), "findings": dossier.get("findings")}, "matched": [p for p in overlay["patients"] if p.get("risk_level")]})
     model = await grok_json(prompt)
     if model: report["model_summary"] = model
     return overlay, report

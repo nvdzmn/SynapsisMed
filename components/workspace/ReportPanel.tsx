@@ -28,6 +28,7 @@ type ReportPanelProps = {
   onToggleCondition: (id: string) => void;
   onClearConditions: () => void;
   onStart: () => void;
+  onSample: () => void;
   onSelectPatient: (id: string) => void;
   onRetry: () => void;
   onOpenLast: () => void;
@@ -66,6 +67,7 @@ function SearchComposer({
   onToggleConditions,
   onTogglePatients,
   onStart,
+  onSample,
 }: ReportPanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -99,9 +101,14 @@ function SearchComposer({
           {cohortSize ? `All ${cohortSize} patients` : "All patients"}
         </div>
       )}
-      <button type="button" onClick={onStart} disabled={phase === "running"} className="h-10 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press disabled:opacity-60">
-        {phase === "running" ? "Running…" : "Start run"}
-      </button>
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={onStart} disabled={phase === "running"} className="h-10 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press disabled:opacity-60">
+          {phase === "running" ? "Running…" : "Start run"}
+        </button>
+        <button type="button" onClick={onSample} disabled={phase === "running"} className="h-10 rounded-lg border border-line-strong text-sm font-semibold text-ink disabled:opacity-60">
+          Sample report
+        </button>
+      </div>
       <div>
         <p className="mb-1.5 text-[11px] tracking-[0.055px] text-muted">TRY ASKING</p>
         <div className="space-y-1">
@@ -137,7 +144,7 @@ function MinimizedReport({ phase, report, reviewCount, cohortSize, onShow }: { p
 function ReportBody(props: ReportPanelProps) {
   if (props.phase === "idle") return <IdleReport cohortSize={props.cohortSize} />;
   if (props.phase === "running") return <RunningReport />;
-  if (props.phase === "failed") return <FailedReport error={props.error} onRetry={props.onRetry} onOpenLast={props.onOpenLast} />;
+  if (props.phase === "failed") return <FailedReport error={props.error} onRetry={props.onRetry} onSample={props.onSample} onOpenLast={props.onOpenLast} />;
   return <ReadyReport {...props} />;
 }
 
@@ -177,7 +184,7 @@ function RunningReport() {
   );
 }
 
-function FailedReport({ error, onRetry, onOpenLast }: { error: string; onRetry: () => void; onOpenLast: () => void }) {
+function FailedReport({ error, onRetry, onSample, onOpenLast }: { error: string; onRetry: () => void; onSample: () => void; onOpenLast: () => void }) {
   return (
     <>
       <header>
@@ -186,7 +193,7 @@ function FailedReport({ error, onRetry, onOpenLast }: { error: string; onRetry: 
       </header>
       <div className="rounded-lg border border-blocked-border bg-blocked-bg px-3.5 py-3 text-blocked-fg">
         <p className="text-sm font-semibold">× {error || "The run stopped before a report was written"}</p>
-        <p className="mt-1.5 text-[11px] leading-4 tracking-[0.055px]">No report was produced and no mail was sent. A completed report from earlier in this session is unchanged.</p>
+        <p className="mt-1.5 text-[11px] leading-4 tracking-[0.055px]">No report was produced and no mail was sent. Open last report loads the newest completed report still on the server.</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={onRetry} className="h-10 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press">
@@ -196,6 +203,9 @@ function FailedReport({ error, onRetry, onOpenLast }: { error: string; onRetry: 
           Open last report
         </button>
       </div>
+      <button type="button" onClick={onSample} className="h-10 rounded-lg border border-line-strong text-sm font-semibold text-ink">
+        Sample report
+      </button>
       <Caution />
     </>
   );
@@ -209,7 +219,8 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
         <p className="text-[11px] tracking-[0.055px] text-muted">{report?.kicker || "PANEL REPORT"}</p>
         <h2 className="font-display text-lg font-semibold leading-[26px] tracking-[-0.09px] text-ink">{report?.title || "Panel report"}</h2>
       </header>
-      <Caution text={report?.footer} />
+      {report?.placeholder && <Caution text="Sample report. The sources are fixed landmark trials, not a live PubMed search. The write-up is from Grok." />}
+      <Caution text={report?.placeholder ? "Synthetic records. Decision support, not a treatment recommendation." : report?.footer} />
       <Section index="1" title="THE QUESTION THIS RUN ASKED">
         <p className="text-sm leading-5 text-ink">{report?.question}</p>
       </Section>
