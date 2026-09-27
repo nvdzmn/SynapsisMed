@@ -51,3 +51,23 @@ export type VoiceSecretResponse = {
   client_secret?: string | { value?: string };
   detail?: string;
 };
+
+export type VoiceReportContext = {
+  report_id?: string;
+  sections?: {
+    question?: string;
+    literature?: string;
+    limitations?: string;
+  };
+  footer?: string;
+};
+
+export type VoiceSessionResponse = {
+  run_id?: string;
+  report_id?: string;
+  voice_secret?: VoiceSecretResponse | string;
+  context?: { report?: VoiceReportContext };
+  detail?: string;
+  status?: string;
+  error?: string;
+};

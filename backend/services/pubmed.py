@@ -10,7 +10,10 @@ async def fetch_pubmed_abstracts(query: str, max_results: int = 3) -> list[dict]
     async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": "SynapseMed/0.1 clinical-demo"}) as client:
         search = await client.get(SEARCH_URL, params=params)
         search.raise_for_status()
-        pmids = search.json().get("esearchresult", {}).get("idlist", [])
+        result = search.json().get("esearchresult", {})
+        if result.get("ERROR"):
+            raise RuntimeError(str(result["ERROR"]))
+        pmids = result.get("idlist", [])
         if not pmids:
             return []
         response = await client.get(FETCH_URL, params={"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"})
