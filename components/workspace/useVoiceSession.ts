@@ -66,7 +66,8 @@ export function useVoiceSession(runId: string | null) {
     playhead.current += buffer.duration;
   };
 
-  const connect = async (patientName: string) => {
+  /** `subject` is a patient name (or joined names) to focus on, or null to cover the whole report. */
+  const connect = async (subject: string | null) => {
     if (!runId || wsRef.current) return;
     setError("");
     setYou("");
@@ -79,7 +80,7 @@ export function useVoiceSession(runId: string | null) {
     void context.resume();
     try {
       const session = await openVoiceSession(runId);
-      const instructions = `You are SynapseMed, a spoken clinical evidence assistant. Discuss only this physician report. Do not search, draft, prescribe, or tell anyone to start or stop a medicine. Patient in focus: ${patientName}. ${session.brief} Keep answers concise.`;
+      const instructions = `You are SynapseMed, a spoken clinical evidence assistant. Discuss only this physician report. Do not search, draft, prescribe, or tell anyone to start or stop a medicine. ${subject ? `Patient in focus: ${subject}.` : "Cover the whole panel report: the question it asked, what the literature supports and does not support, and each flagged patient in turn. Do not single out one patient unless asked."} ${session.brief} Keep answers concise.`;
       const ws = new WebSocket("wss://api.x.ai/v1/realtime?model=grok-voice-latest", [`xai-client-secret.${session.secret}`]);
       wsRef.current = ws;
       ws.onopen = async () => {

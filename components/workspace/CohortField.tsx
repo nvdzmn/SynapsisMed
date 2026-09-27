@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as Reac
 import { AnimatePresence, animate, motion, useMotionTemplate, useMotionValue, type MotionValue } from "framer-motion";
 import type { GraphEdge } from "../../lib/triallens";
 import { QUIET_DOTS, levelColors, type PanelPatient, type Phase, type QuietDot, type SourceNode } from "../../lib/workspace-data";
+import { button } from "./ui";
 
 type CohortFieldProps = {
   phase: Phase;
@@ -22,10 +23,16 @@ type CohortFieldProps = {
   onSelect: (id: string) => void;
   onTalk: () => void;
   onDraft: () => void;
+  onNotes: () => void;
+  /** Saved physician notes per patient id, shown on the Notes button. */
+  noteCounts?: Record<string, number>;
   onEndVoice: () => void;
   onToggleMute: () => void;
   onDismissCard?: () => void;
   onTalkGroup?: (names: string[]) => void;
+  onTalkReport?: () => void;
+  /** What the live voice session is about: a name, joined names, or null for the whole report. */
+  voiceSubject?: string | null;
 };
 
 const SNAP = 46;
@@ -112,10 +119,14 @@ export default function CohortField({
   onSelect,
   onTalk,
   onDraft,
+  onNotes,
+  noteCounts,
   onEndVoice,
   onToggleMute,
   onDismissCard,
   onTalkGroup,
+  onTalkReport,
+  voiceSubject = null,
 }: CohortFieldProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -619,10 +630,10 @@ export default function CohortField({
       </svg>
 
       <div data-interactive className="absolute right-4 top-4 flex overflow-hidden rounded-lg border border-line bg-surface text-sm font-semibold text-ink shadow-[0_6px_20px_rgba(18,25,51,0.06)]">
-        <button type="button" onClick={() => zoomBy(1.35)} className="h-8 w-8 hover:bg-canvas" aria-label="Zoom in">
+        <button type="button" onClick={() => zoomBy(1.35)} className={`${button.icon} rounded-none`} aria-label="Zoom in">
           +
         </button>
-        <button type="button" onClick={() => zoomBy(1 / 1.35)} className="h-8 w-8 border-l border-line hover:bg-canvas" aria-label="Zoom out">
+        <button type="button" onClick={() => zoomBy(1 / 1.35)} className={`${button.icon} rounded-none border-l border-line`} aria-label="Zoom out">
           −
         </button>
         <button
@@ -630,26 +641,37 @@ export default function CohortField({
           onClick={() => {
             reset();
           }}
-          className="h-8 border-l border-line px-2.5 text-xs font-medium hover:bg-canvas"
+          className="h-8 border-l border-line px-2.5 text-xs font-medium text-secondary transition-colors hover:bg-canvas hover:text-ink"
         >
           Fit
         </button>
       </div>
-      <p className="pointer-events-none absolute bottom-4 right-4 text-[11px] tracking-[0.055px] text-muted">Drag the canvas to pan · scroll to zoom · drop a patient onto another to compare · click the report to reset</p>
+      <p className="pointer-events-none absolute bottom-5 left-4 right-60 truncate text-[11px] tracking-[0.055px] text-muted">Drag the canvas to pan · scroll to zoom · drop a patient onto another to compare · click the report to reset</p>
+      {(phase === "ready" || phase === "empty") && (
+        <button
+          type="button"
+          data-interactive
+          onClick={showVoice ? onEndVoice : (onTalkReport ?? onTalk)}
+          className={`${button.primary} absolute bottom-4 right-4 shadow-[0_10px_28px_rgba(111,75,209,0.35)]`}
+        >
+          <span className={`h-2 w-2 rounded-full bg-white ${showVoice ? "animate-pulse" : "opacity-70"}`} />
+          {showVoice ? `Voice live · ${voiceSubject ?? "whole report"}` : "Voice · discuss report"}
+        </button>
+      )}
       <AnimatePresence>
         {showCard && selected && !showVoice && !draggingNode && groupMembers.length > 1 && (
           <AnchoredPanel key={`group-${activeGroup?.join("+")}`} anchor={panelAnchor} accent="var(--action-primary)" transform={transform} svgRef={svgRef} fieldRef={fieldRef} vx={vx} vy={vy} vk={vk} width={380}>
-            <GroupPanel members={groupMembers} selectedId={selected.id} sources={sources} onFocus={onSelect} onTalk={() => (onTalkGroup ? onTalkGroup(groupMembers.map((member) => member.name)) : onTalk())} onDraft={onDraft} onUngroup={() => ungroup(groupMembers.map((member) => member.id))} onClose={onDismissCard} />
+            <GroupPanel members={groupMembers} selectedId={selected.id} sources={sources} onFocus={onSelect} onTalk={() => (onTalkGroup ? onTalkGroup(groupMembers.map((member) => member.name)) : onTalk())} onDraft={onDraft} onNotes={onNotes} noteCounts={noteCounts} onUngroup={() => ungroup(groupMembers.map((member) => member.id))} onClose={onDismissCard} />
           </AnchoredPanel>
         )}
         {showCard && selected && !showVoice && !draggingNode && groupMembers.length <= 1 && (
           <AnchoredPanel key={`card-${selected.id}`} anchor={panelAnchor} accent={levelColors(selected.level).node} transform={transform} svgRef={svgRef} fieldRef={fieldRef} vx={vx} vy={vy} vk={vk} width={320}>
-            <PatientCard patient={selected} onTalk={onTalk} onDraft={onDraft} onClose={onDismissCard} />
+            <PatientCard patient={selected} noteCount={noteCounts?.[selected.id] ?? 0} onTalk={onTalk} onDraft={onDraft} onNotes={onNotes} onClose={onDismissCard} />
           </AnchoredPanel>
         )}
         {showVoice && (
-          <AnchoredPanel key={`voice-${activeGroup?.join("+") ?? selected?.id ?? "hub"}`} anchor={panelAnchor} accent="var(--action-primary)" transform={transform} svgRef={svgRef} fieldRef={fieldRef} vx={vx} vy={vy} vk={vk} width={360}>
-            <VoicePanel patientName={groupMembers.length > 1 ? groupMembers.map((member) => member.name).join(" and ") : selected?.name || "this report"} muted={muted} you={voiceYou} reply={voiceReply} error={voiceError} onToggleMute={onToggleMute} onEnd={onEndVoice} />
+          <AnchoredPanel key={`voice-${voiceSubject ?? "report"}`} anchor={voiceSubject === null ? { px: CX, py: CY, r: HUB_R } : panelAnchor} accent="var(--action-primary)" transform={transform} svgRef={svgRef} fieldRef={fieldRef} vx={vx} vy={vy} vk={vk} width={360}>
+            <VoicePanel patientName={voiceSubject ?? "the whole report"} muted={muted} you={voiceYou} reply={voiceReply} error={voiceError} onToggleMute={onToggleMute} onEnd={onEndVoice} />
           </AnchoredPanel>
         )}
       </AnimatePresence>
@@ -754,13 +776,35 @@ function AnchoredPanel({ anchor, accent, transform, svgRef, fieldRef, vx, vy, vk
 function CloseButton({ onClose }: { onClose?: () => void }) {
   if (!onClose) return null;
   return (
-    <button type="button" onClick={onClose} aria-label="Close panel" className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-lg leading-none text-secondary hover:bg-canvas hover:text-ink">
+    <button type="button" onClick={onClose} aria-label="Close panel" className={`${button.icon} text-lg leading-none`}>
       ×
     </button>
   );
 }
 
-function PatientCard({ patient, onTalk, onDraft, onClose }: { patient: PanelPatient; onTalk: () => void; onDraft: () => void; onClose?: () => void }) {
+/** One labelled section of a patient card. A single item reads as a line; several read as a bullet list. */
+function Bullets({ title, items, tone }: { title: string; items: string[]; tone: string }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-1 text-[11px] leading-4 tracking-[0.055px]">
+      <p className="text-muted">{title}</p>
+      {items.length === 1 ? (
+        <p className={tone}>{items[0]}</p>
+      ) : (
+        <ul className="space-y-1">
+          {items.map((item) => (
+            <li key={item} className={`flex gap-1.5 ${tone}`}>
+              <span aria-hidden className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-current opacity-60" />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PatientCard({ patient, noteCount, onTalk, onDraft, onNotes, onClose }: { patient: PanelPatient; noteCount: number; onTalk: () => void; onDraft: () => void; onNotes: () => void; onClose?: () => void }) {
   const colors = levelColors(patient.level);
   return (
     <article className="flex flex-col gap-2.5 rounded-xl border-[1.5px] border-violet bg-surface p-4 shadow-[0_18px_48px_rgba(111,75,209,0.18)]">
@@ -776,34 +820,18 @@ function PatientCard({ patient, onTalk, onDraft, onClose }: { patient: PanelPati
           <CloseButton onClose={onClose} />
         </div>
       </header>
-      <div className="space-y-1 text-[11px] leading-4 tracking-[0.055px]">
-        <p className="text-muted">CHART FIELDS USED</p>
-        {patient.fields.map((field) => (
-          <p key={field} className="text-ink">
-            {field}
-          </p>
-        ))}
-      </div>
-      {patient.mismatches.length > 0 && (
-        <div className="space-y-1 text-[11px] leading-4 tracking-[0.055px]">
-          <p className="text-muted">MISMATCHES</p>
-          {patient.mismatches.map((item) => (
-            <p key={item} className="text-caution-fg">
-              {item}
-            </p>
-          ))}
-        </div>
-      )}
-      <div className="space-y-1 text-[11px] leading-4 tracking-[0.055px]">
-        <p className="text-muted">CLINICIAN REVIEW NOTE</p>
-        <p className="text-ink">{patient.review}</p>
-      </div>
+      <Bullets title="CHART FIELDS USED" items={patient.fields} tone="text-ink" />
+      <Bullets title="MISMATCHES" items={patient.mismatches} tone="text-caution-fg" />
+      <Bullets title={patient.checks?.length ? "CHECK AT NEXT VISIT" : "CLINICIAN REVIEW NOTE"} items={patient.checks?.length ? patient.checks : [patient.review]} tone="text-ink" />
+      <button type="button" onClick={onTalk} className={button.primary}>
+        ● Talk about {patient.name.split(" ")[0]}
+      </button>
       <div className="flex gap-2">
-        <button type="button" onClick={onTalk} className="flex h-10 flex-1 items-center justify-center rounded-lg border border-line-strong bg-surface text-sm font-semibold text-ink">
-          ● Talk about {patient.name.split(" ")[0]}
+        <button type="button" onClick={onNotes} className={`${button.secondary} flex-1`}>
+          {noteCount ? `My notes · ${noteCount}` : "Add a note"}
         </button>
-        <button type="button" onClick={onDraft} className="h-10 flex-1 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press">
-          Draft a note
+        <button type="button" onClick={onDraft} className={`${button.secondary} flex-1`}>
+          Draft a message
         </button>
       </div>
     </article>
@@ -817,12 +845,14 @@ type GroupPanelProps = {
   onFocus: (id: string) => void;
   onTalk: () => void;
   onDraft: () => void;
+  onNotes: () => void;
+  noteCounts?: Record<string, number>;
   onUngroup: () => void;
   onClose?: () => void;
 };
 
 /** Side-by-side view of grouped patients, with the overlaps and differences the physician may want to connect. */
-function GroupPanel({ members, selectedId, sources, onFocus, onTalk, onDraft, onUngroup, onClose }: GroupPanelProps) {
+function GroupPanel({ members, selectedId, sources, onFocus, onTalk, onDraft, onNotes, noteCounts, onUngroup, onClose }: GroupPanelProps) {
   const signals = members.map((member) => signalsOf(member));
   const shared = (signals[0] ?? []).filter((label) => signals.every((set) => set.includes(label)));
   const levels = new Set(members.map((member) => member.level));
@@ -840,7 +870,7 @@ function GroupPanel({ members, selectedId, sources, onFocus, onTalk, onDraft, on
           <p className="truncate text-[11px] tracking-[0.055px] text-secondary">{members.map((member) => first(member.name)).join(" · ")} · against this run&apos;s sources</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <button type="button" onClick={onUngroup} className="rounded-md border border-line px-2 py-1 text-[11px] font-medium text-secondary hover:bg-canvas">
+          <button type="button" onClick={onUngroup} className={button.small}>
             Ungroup
           </button>
           <CloseButton onClose={onClose} />
@@ -870,24 +900,8 @@ function GroupPanel({ members, selectedId, sources, onFocus, onTalk, onDraft, on
             {active.level}
           </span>
         </div>
-        <div>
-          <p className="text-muted">CHART FIELDS</p>
-          {active.fields.map((field) => (
-            <p key={field} className="text-ink">
-              {field}
-            </p>
-          ))}
-        </div>
-        {active.mismatches.length > 0 && (
-          <div>
-            <p className="text-muted">MISMATCHES</p>
-            {active.mismatches.map((item) => (
-              <p key={item} className="text-caution-fg">
-                {item}
-              </p>
-            ))}
-          </div>
-        )}
+        <Bullets title="CHART FIELDS" items={active.fields} tone="text-ink" />
+        <Bullets title="MISMATCHES" items={active.mismatches} tone="text-caution-fg" />
         {unique.length > 0 && (
           <p className="text-secondary">
             Only {first(active.name)}: {unique.join(", ")}.
@@ -900,12 +914,15 @@ function GroupPanel({ members, selectedId, sources, onFocus, onTalk, onDraft, on
           {sources.map((source) => `${source.label} ${source.citation.split(" · ")[0]}`).join(" · ")}
         </p>
       )}
+      <button type="button" onClick={onTalk} className={button.primary}>
+        ● Talk about {members.length === 2 ? "both" : "all"}
+      </button>
       <div className="flex gap-2">
-        <button type="button" onClick={onTalk} className="flex h-9 flex-1 items-center justify-center rounded-lg border border-line-strong bg-surface text-sm font-semibold text-ink">
-          ● Talk about {members.length === 2 ? "both" : "all"}
+        <button type="button" onClick={onNotes} className={`${button.secondary} min-w-0 flex-1`}>
+          {noteCounts?.[active.id] ? `Notes · ${noteCounts[active.id]}` : "Add a note"} · {first(active.name)}
         </button>
-        <button type="button" onClick={onDraft} className="h-9 flex-1 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press">
-          Draft a note · {first(active.name)}
+        <button type="button" onClick={onDraft} className={`${button.secondary} min-w-0 flex-1`}>
+          Message · {first(active.name)}
         </button>
       </div>
     </section>
@@ -945,10 +962,10 @@ function VoicePanel({ patientName, muted, you, reply, error, onToggleMute, onEnd
         <p className="text-sm leading-5 text-ink">{error || reply}</p>
       </div>
       <div className="flex gap-2">
-        <button type="button" onClick={onToggleMute} className="h-10 flex-1 rounded-lg border border-line-strong bg-surface text-sm font-semibold text-ink">
+        <button type="button" onClick={onToggleMute} className={`${button.secondary} flex-1`}>
           {muted ? "Unmute" : "Mute"}
         </button>
-        <button type="button" onClick={onEnd} className="h-10 flex-1 rounded-lg border border-line-strong bg-surface text-sm font-semibold text-ink">
+        <button type="button" onClick={onEnd} className={`${button.secondary} flex-1`}>
           End voice
         </button>
       </div>

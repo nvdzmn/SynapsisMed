@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import type { ReportHistoryItem, ReportView } from "../../lib/triallens";
+import { button } from "./ui";
 import { CONDITIONS, SUGGESTIONS, conditionSummary, levelColors, matchCountLabel, type PanelPatient, type Phase, type SourceNode } from "../../lib/workspace-data";
 
 type ReportPanelProps = {
@@ -34,6 +35,9 @@ type ReportPanelProps = {
   onClearConditions: () => void;
   onStart: () => void;
   onSample: () => void;
+  attachedName: string | null;
+  onAttach: () => void;
+  onClearAttachment: () => void;
   onSelectPatient: (id: string) => void;
   onRetry: () => void;
   onOpenLast: () => void;
@@ -171,6 +175,9 @@ function SearchComposer({
   onTogglePatients,
   onStart,
   onSample,
+  attachedName,
+  onAttach,
+  onClearAttachment,
 }: ReportPanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -187,12 +194,12 @@ function SearchComposer({
         <textarea value={query} onChange={(event) => onQuery(event.target.value)} rows={2} className="min-h-[40px] w-full resize-none bg-transparent text-sm leading-5 text-ink outline-none" />
       </label>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onTogglePatients} className={`flex h-[42px] items-center justify-between rounded-lg border px-3 text-left ${patientsOpen ? "border-violet" : "border-line"}`}>
+        <button type="button" onClick={onTogglePatients} className={`flex h-10 items-center justify-between rounded-lg border px-3 text-left ${patientsOpen ? "border-violet" : "border-line"}`}>
           <span className="text-[11px] tracking-[0.055px] text-muted">Patients</span>
           <span className="text-sm text-ink">{cohortSize ? `All ${cohortSize}` : "All"}</span>
           <span className="text-secondary">▾</span>
         </button>
-        <button type="button" onClick={onToggleConditions} className={`flex h-[42px] items-center justify-between gap-2 rounded-lg border px-3 text-left ${conditionOpen ? "border-violet bg-cleared-bg" : "border-line"}`}>
+        <button type="button" onClick={onToggleConditions} className={`flex h-10 items-center justify-between gap-2 rounded-lg border px-3 text-left ${conditionOpen ? "border-violet bg-cleared-bg" : "border-line"}`}>
           <span className="text-[11px] tracking-[0.055px] text-muted">Condition</span>
           <span className="truncate text-sm text-ink">{conditionSummary(conditionIds)}</span>
           <span className="text-secondary">▾</span>
@@ -204,11 +211,28 @@ function SearchComposer({
           {cohortSize ? `All ${cohortSize} patients` : "All patients"}
         </div>
       )}
+      {attachedName ? (
+        <div className="flex h-10 items-center justify-between gap-2 rounded-lg border border-accent/40 bg-accent-surface pl-3 pr-1.5 text-xs font-medium text-accent">
+          <span className="min-w-0 truncate">
+            <span className="text-[11px] font-normal text-accent/80">Attached · </span>
+            {attachedName}
+          </span>
+          <button type="button" onClick={onClearAttachment} aria-label="Remove attached source" className={`${button.icon} h-7 w-7 text-base leading-none hover:bg-surface`}>
+            ×
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={onAttach} disabled={phase === "running"} className={`${button.secondary} w-full`}>
+          <span aria-hidden className="text-base leading-none">+</span>
+          Attach a source
+          <span className="text-[11px] font-normal text-muted">optional · PDF, DOCX or TXT</span>
+        </button>
+      )}
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onStart} disabled={phase === "running"} className="h-10 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press disabled:opacity-60">
+        <button type="button" onClick={onStart} disabled={phase === "running"} className={button.primary}>
           {phase === "running" ? "Running…" : "Start run"}
         </button>
-        <button type="button" onClick={onSample} disabled={phase === "running"} className="h-10 rounded-lg border border-line-strong text-sm font-semibold text-ink disabled:opacity-60">
+        <button type="button" onClick={onSample} disabled={phase === "running"} className={button.secondary}>
           Sample report
         </button>
       </div>
@@ -299,14 +323,14 @@ function FailedReport({ error, onRetry, onSample, onOpenLast }: { error: string;
         <p className="mt-1.5 text-[11px] leading-4 tracking-[0.055px]">No report was produced and no mail was sent. Open last report loads the newest completed report still on the server.</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onRetry} className="h-10 rounded-lg bg-violet text-sm font-semibold text-white hover:bg-violet-press">
+        <button type="button" onClick={onRetry} className={button.primary}>
           Retry run
         </button>
-        <button type="button" onClick={onOpenLast} className="h-10 rounded-lg border border-line-strong text-sm font-semibold text-ink">
+        <button type="button" onClick={onOpenLast} className={button.secondary}>
           Open last report
         </button>
       </div>
-      <button type="button" onClick={onSample} className="h-10 rounded-lg border border-line-strong text-sm font-semibold text-ink">
+      <button type="button" onClick={onSample} className={button.secondary}>
         Sample report
       </button>
       <Caution />
@@ -423,7 +447,7 @@ export function ConditionMenu({
       </ul>
       <div className="mt-1 flex items-center justify-between border-t border-line px-1.5 pt-2 text-[11px] tracking-[0.055px]">
         <span className="text-secondary">{matchCountLabel(ids)}</span>
-        <button type="button" onClick={onClear} className="font-medium text-accent">
+        <button type="button" onClick={onClear} className="text-[11px] font-semibold tracking-[0.055px] text-violet">
           Clear
         </button>
       </div>

@@ -9,7 +9,15 @@ export type OverlayPatient = {
   reasons?: { text?: string; chart_fields?: string[] }[];
   mismatches?: string[];
   clinician_note?: string | null;
+  clinician_checks?: string[];
+  assessed_by?: "agent" | "rules_floor" | "rules_fallback" | "rules_only";
 };
+
+function recordMeta(assessedBy: OverlayPatient["assessed_by"]): string {
+  if (assessedBy === "rules_floor") return "Synthetic record · kept by rules, model review disagreed";
+  if (assessedBy === "rules_fallback" || assessedBy === "rules_only") return "Synthetic record · matched by rules, no model review";
+  return "Synthetic record";
+}
 
 export type SourceRecord = {
   source_id?: string;
@@ -134,13 +142,14 @@ export async function readRun(runId: string): Promise<RunView> {
   return (await response.json()) as RunView;
 }
 
-export async function createDraft(runId: string, patientId: string, points: string[]): Promise<DraftResponse> {
+/** Drafts a patient message. Passing `rewrite` asks the writer to rework the text the physician is looking at. */
+export async function createDraft(runId: string, patientId: string, points: string[], rewrite?: { instruction: string; previousText: string }): Promise<DraftResponse> {
   const response = await fetch(`${API_URL}/api/runs/${runId}/patients/${patientId}/draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ points }),
+    body: JSON.stringify({ points, instruction: rewrite?.instruction.trim() || undefined, previous_text: rewrite?.previousText.trim() || undefined }),
   });
-  if (!response.ok) throw new Error(await errorMessage(response, "Could not draft the note"));
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not draft the message"));
   return (await response.json()) as DraftResponse;
 }
 
@@ -159,15 +168,18 @@ export async function openVoiceSession(runId: string): Promise<{ secret: string;
   const body = (await response.json().catch(() => ({}))) as {
     detail?: string;
     voice_secret?: { value?: string; client_secret?: string | { value?: string } } | string;
-    context?: { report?: { sections?: { question?: string; literature?: string; limitations?: string }; footer?: string; report_id?: string } };
+    context?: { brief?: string | null; report?: { sections?: { question?: string; literature?: string; limitations?: string }; footer?: string; report_id?: string } };
   };
   if (!response.ok) throw new Error(body.detail || "Could not open a voice session");
   const secret = clientSecret(body.voice_secret);
   if (!secret) throw new Error("The voice service did not return a session secret");
   const report = body.context?.report;
-  const brief = [report?.report_id ? `Report ${report.report_id}.` : "", report?.sections?.question, report?.sections?.literature, report?.sections?.limitations, report?.footer]
-    .filter(Boolean)
-    .join(" ");
+  // Runs saved before the cohort agent wrote briefs fall back to the report sections.
+  const brief =
+    body.context?.brief ||
+    [report?.report_id ? `Report ${report.report_id}.` : "", report?.sections?.question, report?.sections?.literature, report?.sections?.limitations, report?.footer]
+      .filter(Boolean)
+      .join(" ");
   return { secret, brief };
 }
 
@@ -218,10 +230,11 @@ export function presentRun(view: RunView, cohortSize: number): PresentedRun {
       x: spot.x,
       y: spot.y,
       r: level === "CRITICAL" ? 11 : level === "HIGH" ? 9 : 8,
-      meta: "Synthetic record",
+      meta: recordMeta(patient.assessed_by),
       fields: fields.length ? fields : ["Chart fields used in this contrast"],
       mismatches: patient.mismatches ?? [],
       review: patient.clinician_note || "Review whether this evidence is close enough to matter at the next visit.",
+      checks: patient.clinician_checks?.filter(Boolean),
     };
   });
   const sources: SourceNode[] = pack.slice(0, 8).map((source, index) => {
@@ -270,4 +283,43 @@ export function formatWhen(iso?: string | null): string {
 
 export function cohortLabel(size: number | null): string {
   return size ? `Synthetic panel · ${size} patients` : "Synthetic panel";
+}
+
+/** A note the physician keeps for themselves. It is never sent to the patient or to a model. */
+export type PatientNote = { note_id: string; patient_id: string; run_id?: string | null; created_at: string; text: string };
+
+export async function listNotes(patientId: string): Promise<PatientNote[]> {
+  const response = await fetch(`${API_URL}/api/patients/${patientId}/notes`);
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not load the notes"));
+  const body = (await response.json()) as PatientNote[];
+  return Array.isArray(body) ? body : [];
+}
+
+export async function addNote(patientId: string, text: string, runId: string | null): Promise<PatientNote> {
+  const response = await fetch(`${API_URL}/api/patients/${patientId}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, run_id: runId ?? undefined }),
+  });
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not save the note"));
+  return (await response.json()) as PatientNote;
+}
+
+export async function deleteNote(noteId: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/notes/${noteId}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not delete the note"));
+}
+
+export async function countNotes(): Promise<Record<string, number>> {
+  const response = await fetch(`${API_URL}/api/notes/counts`);
+  if (!response.ok) return {};
+  return (await response.json()) as Record<string, number>;
+}
+
+/** Starting bullets for a private note, condensed from this report's review of the patient. */
+export async function suggestNote(runId: string, patientId: string): Promise<{ bullets: string[]; source: "model" | "review" }> {
+  const response = await fetch(`${API_URL}/api/runs/${runId}/patients/${patientId}/note-draft`, { method: "POST" });
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not suggest a note"));
+  const body = (await response.json()) as { bullets?: string[]; source?: "model" | "review" };
+  return { bullets: Array.isArray(body.bullets) ? body.bullets : [], source: body.source === "review" ? "review" : "model" };
 }

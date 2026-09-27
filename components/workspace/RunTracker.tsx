@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import type { Phase } from "../../lib/workspace-data";
+import { button } from "./ui";
 
 type StepState = "pending" | "active" | "done" | "error";
 
@@ -15,13 +16,11 @@ type RunTrackerProps = {
   sourceCount: number;
   attachedName: string | null;
   error: string;
-  onAttach: () => void;
-  onClearAttachment: () => void;
   onStart: () => void;
 };
 
 /** The strip above the graph: what a run does, where this one is, and what it found. */
-export default function RunTracker({ phase, literatureDone, contrastDone, finishedAt, reviewCount, total, sourceCount, attachedName, error, onAttach, onClearAttachment, onStart }: RunTrackerProps) {
+export default function RunTracker({ phase, literatureDone, contrastDone, finishedAt, reviewCount, total, sourceCount, attachedName, error, onStart }: RunTrackerProps) {
   const complete = phase === "ready" || phase === "empty";
   const running = phase === "running";
   const failed = phase === "failed";
@@ -71,22 +70,8 @@ export default function RunTracker({ phase, literatureDone, contrastDone, finish
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {attachedName ? (
-            <span className="flex h-9 items-center gap-2 rounded-lg border border-accent/40 bg-accent-surface pl-3 pr-1.5 text-xs font-medium text-accent">
-              <span className="max-w-[200px] truncate">{attachedName}</span>
-              <button type="button" onClick={onClearAttachment} aria-label="Remove attached source" className="grid h-6 w-6 place-items-center rounded-md text-base leading-none hover:bg-surface">
-                ×
-              </button>
-            </span>
-          ) : (
-            <button type="button" onClick={onAttach} disabled={running} className="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 text-sm font-semibold text-ink hover:bg-canvas disabled:opacity-50">
-              <span aria-hidden className="text-base leading-none">+</span>
-              Attach a source
-              <span className="text-[11px] font-normal text-muted">PDF · DOCX · TXT</span>
-            </button>
-          )}
           {(phase === "idle" || failed) && (
-            <button type="button" onClick={onStart} className="h-9 rounded-lg bg-violet px-3.5 text-sm font-semibold text-white hover:bg-violet-press">
+            <button type="button" onClick={onStart} className={button.primary}>
               {failed ? "Retry run" : "Start run"}
             </button>
           )}
