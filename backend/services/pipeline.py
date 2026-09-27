@@ -61,7 +61,7 @@ def safe_json(text: str) -> dict | None:
 async def openai_literature(bundle: dict, articles: list[dict], upload: dict | None) -> dict | None:
     key = os.getenv("OPENAI_API_KEY")
     if not key: return None
-    prompt = "Return JSON evidence findings only. Never name people or use ids. Use only supplied PubMed sources. " + json.dumps({"phenotype": bundle, "articles": articles, "upload": upload})
+    prompt = "Return JSON evidence findings only. Never name people or use ids. Use only supplied literature sources. " + json.dumps({"phenotype": bundle, "articles": articles, "upload": upload})
     async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), "input": prompt, "text": {"format": {"type": "json_object"}}})
     if response.is_error: return None
@@ -81,14 +81,15 @@ async def literature_agent(bundle: dict, upload: dict | None = None, question: s
         except Exception as exc: errors.append(str(exc))
     if not articles and errors and not upload:
         raise RuntimeError(errors[0])
-    unique = {item["pmid"]: item for item in articles}.values()
-    sources = [{"source_id": f"pmid:{a['pmid']}", **a, "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{a['pmid']}/", "landmark": False} for a in list(unique)[:12]]
+    unique = {item.get("source_id") or item.get("pmid"): item for item in articles}.values()
+    sources = [{"source_id": a.get("source_id") or f"pmid:{a['pmid']}", **a, "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{a['pmid']}/" if a.get("pmid") else None, "landmark": False} for a in list(unique)[:12]]
     if upload: sources.append({"source_id": upload["source_id"], "pmid": None, "title": upload["filename"], "journal": "Physician-uploaded literature", "publication_date": None, "abstract": upload.get("text", "")[:5000], "pubmed_url": None, "landmark": False})
     finding_sources = [source["source_id"] for source in sources]
     fallback = [{"finding_id": "f1", "statement": "Recent literature was retrieved for the panel phenotype; applicability requires chart-level clinician review.", "design": "other", "population": "See attached source abstracts.", "intervention_or_exposure": "Not stated consistently across retrieved abstracts.", "comparator": "Not stated", "outcome": "Not stated", "direction": "uncertain", "effect": {"measure": None, "value": None, "interval": None, "as_reported": False, "source_quote": ""}, "source_ids": finding_sources[:3], "limitations": "Generated fallback when the model or PubMed source is unavailable.", "conflicts_with": []}]
     model_output = await openai_literature(bundle, sources, upload)
     findings = model_output.get("findings", fallback) if model_output else fallback
-    return {"dossier_version": "1.0", "dossier_id": ident("ed"), "generated_at": now(), "phenotype_bundle_id": bundle["phenotype_bundle_id"], "retrieval": {"source": "ncbi_pubmed_eutilities", "window": {"from": "2021-01-01", "to": datetime.now().date().isoformat()}, "queries": [{"query_id": f"q{i+1}", "term": term, "result_count": len(sources), "pmids_fetched": [s["pmid"] for s in sources if s["pmid"]], "pmids_omitted": []} for i, term in enumerate(terms)]}, "sources": sources, "findings": findings, "applicability_hints": [], "gaps": ["This is literature surveillance, not a treatment or enrollment determination."]}
+    retrieval_source = "ncbi_pubmed_eutilities" if all(source.get("source") != "europe_pmc" for source in sources) else "ncbi_pubmed_eutilities_with_europe_pmc_fallback"
+    return {"dossier_version": "1.0", "dossier_id": ident("ed"), "generated_at": now(), "phenotype_bundle_id": bundle["phenotype_bundle_id"], "retrieval": {"source": retrieval_source, "window": {"from": "2021-01-01", "to": datetime.now().date().isoformat()}, "queries": [{"query_id": f"q{i+1}", "term": term, "result_count": len(sources), "pmids_fetched": [s["pmid"] for s in sources if s.get("pmid")], "pmids_omitted": []} for i, term in enumerate(terms)]}, "sources": sources, "findings": findings, "applicability_hints": [], "gaps": ["This is literature surveillance, not a treatment or enrollment determination."]}
 
 def placeholder_dossier(bundle: dict, question: str | None, reason: str, terms: list[str]) -> dict:
     sources = [

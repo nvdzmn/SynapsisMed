@@ -30,7 +30,7 @@ Operational data is stored in `backend/data/triallens.db` using SQLite (patients
 
 To use a Synthea download, place its CSV export under `backend/data/synthea_csv/` with `patients.csv`, `conditions.csv`, `observations.csv`, and `medications.csv`. The adapter uses it automatically; absent demo-only biomarkers are deterministically marked/derived in code so a downloaded export can still drive the demo.
 
-Agent assignments for the demo are: Agent 1 uses a configurable OpenAI model (`OPENAI_MODEL`, default `gpt-4.1-mini`), Agent 2 and Agent 4 use Grok 4.7, and Agent 3 uses Grok Voice.
+Agent assignments for the demo are: Agent 1 uses a configurable OpenAI model (`OPENAI_MODEL`, default `gpt-4.1-mini`), Agent 2 and Agent 4 use Grok 4.7, and Agent 3 uses Grok Voice. Literature retrieval uses PubMed first and Europe PMC as a source-labeled fallback; if both live services fail, the UI marks its sample/offline evidence clearly.
 
 ## xAI / Grok setup
 
