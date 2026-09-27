@@ -26,6 +26,8 @@ def load_synthea_csv(directory: Path) -> list[dict]:
                 except ValueError: pass
         # Mock only the indicators our demo needs when Synthea did not export them.
         text = " ".join(conds).lower()
-        if "asthma" in text: metrics.setdefault("Blood_Eosinophils", 360 + (i % 4) * 55); units.setdefault("Blood_Eosinophils", "cells/µL")
-        result.append({"id": f"SYN-{i+1:03d}", "patient_id": f"SYN-{i+1:03d}", "name": f"{row.get('FIRST', 'Synthetic')} {row.get('LAST', 'Patient')}", "age": 45 + (i % 30), "gender": row.get("GENDER", "unknown").title(), "conditions": conds or ["No coded conditions"], "metrics": metrics, "metric_units": units, "current_medications": [item.get("DESCRIPTION", "") for item in index["medications"].get(pid, [])], "synthetic": True, "contact_email": "synthetic-patient@example.invalid"})
+        derived = []
+        if "asthma" in text and "Blood_Eosinophils" not in metrics:
+            metrics["Blood_Eosinophils"] = 360 + (i % 4) * 55; units["Blood_Eosinophils"] = "cells/µL"; derived.append("metrics.Blood_Eosinophils")
+        result.append({"id": f"SYN-{i+1:03d}", "patient_id": f"SYN-{i+1:03d}", "name": f"{row.get('FIRST', 'Synthetic')} {row.get('LAST', 'Patient')}", "age": 45 + (i % 30), "gender": row.get("GENDER", "unknown").title(), "conditions": conds or ["No coded conditions"], "metrics": metrics, "metric_units": units, "demo_derived_fields": derived, "current_medications": [item.get("DESCRIPTION", "") for item in index["medications"].get(pid, [])], "synthetic": True, "contact_email": "synthetic-patient@example.invalid"})
     return result
