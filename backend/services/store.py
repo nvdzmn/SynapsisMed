@@ -33,6 +33,9 @@ def initialize() -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_drafts_run_id ON drafts(run_id);
         """)
+        # Notes saved before voice could write them have no source column.
+        if "source" not in {row["name"] for row in db.execute("PRAGMA table_info(notes)")}:
+            db.execute("ALTER TABLE notes ADD COLUMN source TEXT NOT NULL DEFAULT 'typed'")
 
 def replace_patients(patients: list[dict]) -> None:
     initialize()
@@ -85,12 +88,12 @@ def add_note(note: dict) -> None:
     """The physician's own notes on a patient. They are never sent to the patient or to a model."""
     initialize()
     with connection() as db:
-        db.execute("INSERT INTO notes(note_id, patient_id, run_id, created_at, text) VALUES (?, ?, ?, ?, ?)", (note["note_id"], note["patient_id"], note.get("run_id"), note["created_at"], note["text"]))
+        db.execute("INSERT INTO notes(note_id, patient_id, run_id, created_at, text, source) VALUES (?, ?, ?, ?, ?, ?)", (note["note_id"], note["patient_id"], note.get("run_id"), note["created_at"], note["text"], note.get("source") or "typed"))
 
 def notes_for(patient_id: str) -> list[dict]:
     initialize()
     with connection() as db:
-        return [dict(row) for row in db.execute("SELECT note_id, patient_id, run_id, created_at, text FROM notes WHERE patient_id = ? ORDER BY created_at DESC", (patient_id,))]
+        return [dict(row) for row in db.execute("SELECT note_id, patient_id, run_id, created_at, text, source FROM notes WHERE patient_id = ? ORDER BY created_at DESC", (patient_id,))]
 
 def note_counts() -> dict[str, int]:
     initialize()

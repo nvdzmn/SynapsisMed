@@ -8,6 +8,8 @@ type StepState = "pending" | "active" | "done" | "error";
 
 type RunTrackerProps = {
   phase: Phase;
+  /** The schedule as the end of a sentence, such as "on weekdays at 07:00". Null when scheduled runs are off. */
+  scheduleLabel?: string | null;
   literatureDone: boolean;
   contrastDone: boolean;
   finishedAt: string;
@@ -20,7 +22,7 @@ type RunTrackerProps = {
 };
 
 /** The strip above the graph: what a run does, where this one is, and what it found. */
-export default function RunTracker({ phase, literatureDone, contrastDone, finishedAt, reviewCount, total, sourceCount, attachedName, error, onStart }: RunTrackerProps) {
+export default function RunTracker({ scheduleLabel, phase, literatureDone, contrastDone, finishedAt, reviewCount, total, sourceCount, attachedName, error, onStart }: RunTrackerProps) {
   const complete = phase === "ready" || phase === "empty";
   const running = phase === "running";
   const failed = phase === "failed";
@@ -50,7 +52,7 @@ export default function RunTracker({ phase, literatureDone, contrastDone, finish
   ];
 
   const headline = complete ? `Run complete${finishedAt ? ` · ${finishedAt}` : ""}` : running ? (literatureDone ? "Contrasting charts with the evidence" : "Searching the literature") : failed ? "Run failed" : "Ready to check the panel";
-  const detail = complete ? (phase === "empty" ? "No patients flagged this run" : `${reviewCount} of ${total} patients to review`) : running ? "Usually under a minute" : failed ? error || "Stopped before the report was ready" : "Runs weekdays at 07:00, or start one now";
+  const detail = complete ? (phase === "empty" ? "No patients flagged this run" : `${reviewCount} of ${total} patients to review`) : running ? (literatureDone ? "Each chart gets its own review · about 3 to 4 minutes" : "Usually under a minute") : failed ? error || "Stopped before the report was ready" : scheduleLabel ? `Runs ${scheduleLabel}, or start one now` : "Scheduled runs are off. Start one now";
   const tone = failed ? "bg-blocked-fg" : complete ? "bg-cleared-fg" : running ? "bg-violet" : "bg-neutral-400";
 
   return (

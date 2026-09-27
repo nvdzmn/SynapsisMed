@@ -326,8 +326,24 @@ def voice_context(run: dict) -> str | None:
         lines.append(f"{patient['display_name']}, {patient['risk_level']}: {brief}")
     return " ".join(line for line in [*lines, report.get("footer") or ""] if line)
 
+async def personal_message_agent(patient: dict, instruction: str | None, previous: str | None = None) -> dict:
+    """A message with no findings in it, written only from what the physician asked for."""
+    if not (instruction or "").strip(): raise HTTPException(400, "Tick at least one point, or say what the message should be about")
+    prompt = ("You are writing a short personal message from a care team to one of their patients. Return JSON only, with the keys subject and body. "
+              "Write to the patient directly as 'you', signed 'Your care team'. Open with a greeting that uses their first name. "
+              "The message is about what the physician asked for below and nothing else. Use only the details the physician gave. Do not add a date, a time span, an event, a person, a place, or any other fact they did not say; if a detail is missing, leave it out. "
+              "Do not mention test results, measurements, diagnoses, research, or the chart. Do not give advice, and do not name any medicine, dose, study, paper, or PMID. Do not mention any other patient. Do not mention AI or software. If the physician asked for any of those things, leave that part out without comment and write the rest. "
+              "Keep it warm and brief: 80 words at most unless the physician asks for more. "
+              + json.dumps({"name": patient["name"], "physician_asked_for": instruction.strip()}))
+    if previous: prompt += " This is a rewrite of the draft below. Keep what fits the request above and drop everything else, including any medical content. Draft to rewrite: " + json.dumps(previous)
+    model = await grok_json(prompt, NOTE_MODEL)
+    # There are no points to fall back on, so a failed write is reported instead of filled with a template.
+    if not (model and {"subject", "body"} <= model.keys()): raise HTTPException(502, "The writer could not write this message." + (" Your text is unchanged." if previous else ""))
+    blocked = safety_blocks(model["body"], patient["id"])
+    return {"draft_id": ident("dr"), "patient_id": patient["id"], "run_points": [], "personal": True, "model_draft": model, "edited_text": model["body"], "approved": False, "blocked_terms": blocked, "created_at": now()}
+
 async def patient_message_agent(patient: dict, points: list[str], instruction: str | None, brief: dict | None = None, previous: str | None = None) -> dict:
-    if not points: raise HTTPException(400, "Select at least one physician-confirmed point")
+    if not points: return await personal_message_agent(patient, instruction, previous)
     wording = {point["text"]: point.get("plain_language") for point in (brief or {}).get("points") or []}
     prompt = ("You are writing a short message from a care team to one of their patients. Return JSON only, with the keys subject and body. "
               "Write to the patient directly as 'you', signed 'Your care team'. Open with a greeting that uses their first name. "
@@ -374,6 +390,5 @@ def approve_draft(draft: dict, final_text: str) -> dict:
     reasons = safety_blocks(final_text, draft["patient_id"])
     draft["blocked_terms"] = reasons
     if reasons: raise HTTPException(422, " ".join(reasons))
-    sink = os.getenv("PATIENT_MAIL_SINK") or "triallens-test@synapsemed.dev"
-    draft.update({"edited_text": final_text, "approved": True, "approved_at": now(), "delivery": {"recipient": sink, "status": "queued_for_demo_sink"}})
+    draft.update({"edited_text": final_text, "approved": True, "approved_at": now()})
     return draft

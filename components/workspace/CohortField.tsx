@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
-import { AnimatePresence, animate, motion, useMotionTemplate, useMotionValue, type MotionValue } from "framer-motion";
+import { AnimatePresence, animate, motion, useMotionTemplate, useMotionValue, useReducedMotion, type MotionValue } from "framer-motion";
 import type { GraphEdge } from "../../lib/triallens";
 import { QUIET_DOTS, levelColors, type PanelPatient, type Phase, type QuietDot, type SourceNode } from "../../lib/workspace-data";
 import { button } from "./ui";
 
 type CohortFieldProps = {
   phase: Phase;
+  /** Which part of a run is in flight, so the graph can show what is happening. */
+  stage?: RunStage;
   patients: PanelPatient[];
   quiet: QuietDot[];
   sources: SourceNode[];
@@ -61,19 +63,24 @@ const PATIENT_RING = 252;
 const QUIET_RING = 322;
 const MIN_K = 0.55;
 const MAX_K = 3.2;
+const MAX_STRETCH = 1.7;
+/** Room kept at each side of the canvas for the names beside the outermost nodes. */
+const SIDE_ROOM = 112;
 const FOCUS_K = 1.9;
 const SPRING = { type: "spring", stiffness: 160, damping: 24 } as const;
 const WAVE = [6, 12, 20, 14, 26, 18, 10, 22, 30, 16, 8, 20, 12, 24, 14, 6, 18, 10, 4, 12, 8];
 
 type Placed<T> = T & { px: number; py: number };
+export type RunStage = "literature" | "contrast";
 type Ripple = { id: number; x: number; y: number; r: number; color: string };
 
-function ring<T>(items: T[], radius: number, offset: number, wobble = 0): Placed<T>[] {
+/** Places items round the report. `stretch` widens the ring into an ellipse so a wide canvas is filled, not just its middle. */
+function ring<T>(items: T[], radius: number, offset: number, wobble = 0, stretch = 1): Placed<T>[] {
   return items.map((item, index) => {
     const angle = offset + (index / Math.max(items.length, 1)) * Math.PI * 2;
     const jitter = wobble ? ((index * 7919) % (wobble * 2)) - wobble : 0;
     const r = radius + jitter;
-    return { ...item, px: CX + Math.cos(angle) * r, py: CY + Math.sin(angle) * r };
+    return { ...item, px: CX + Math.cos(angle) * r * stretch, py: CY + Math.sin(angle) * r };
   });
 }
 
@@ -104,6 +111,7 @@ const clamp = (value: number) => Math.min(MAX_K, Math.max(MIN_K, value));
 
 export default function CohortField({
   phase,
+  stage = "literature",
   patients,
   quiet,
   sources,
@@ -128,6 +136,11 @@ export default function CohortField({
   onTalkReport,
   voiceSubject = null,
 }: CohortFieldProps) {
+  const still = useReducedMotion() ?? false;
+  // How much wider the canvas is than the graph's own shape. The layout stretches sideways by this much to use the room.
+  const [stretch, setStretch] = useState(1);
+  // The rings widen until the outer one reaches the side room, so the nodes use the width and their names still fit.
+  const spread = Math.max(1, ((W * stretch) / 2 - SIDE_ROOM) / QUIET_RING);
   const svgRef = useRef<SVGSVGElement>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<SVGGElement>(null);
@@ -135,6 +148,20 @@ export default function CohortField({
   const vy = useMotionValue(0);
   const vk = useMotionValue(1);
   const transform = useMotionTemplate`translate(${vx} ${vy}) scale(${vk})`;
+
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!field) return;
+    const measure = () => {
+      if (!field.clientWidth || !field.clientHeight) return;
+      const next = Math.min(MAX_STRETCH, Math.max(1, field.clientWidth / field.clientHeight / (W / H)));
+      setStretch((current) => (Math.abs(current - next) < 0.01 ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     // Applied as an SVG attribute on purpose: a CSS transform would use a fill-box origin and break the pan maths.
@@ -158,14 +185,14 @@ export default function CohortField({
 
   const graphReady = phase === "ready";
   const showSources = (phase === "ready" || phase === "running" || phase === "empty") && sources.length > 0;
-  const placedSources = ring(sources, SOURCE_RING, -Math.PI / 2 + 0.4);
-  const placedPatients = ring(graphReady ? patients : [], PATIENT_RING, -Math.PI / 2, 22).map((patient) => {
+  const placedSources = ring(sources, SOURCE_RING, -Math.PI / 2 + 0.4, 0, spread);
+  const placedPatients = ring(graphReady ? patients : [], PATIENT_RING, -Math.PI / 2, 22, spread).map((patient) => {
     const moved = positions[patient.id];
     return moved ? { ...patient, px: moved.x, py: moved.y } : patient;
   });
   const placedRef = useRef(placedPatients);
   placedRef.current = placedPatients;
-  const placedQuiet = ring(quiet.length ? quiet : QUIET_DOTS, QUIET_RING, 0.45, 34);
+  const placedQuiet = ring(quiet.length ? quiet : QUIET_DOTS, QUIET_RING, 0.45, 34, spread);
   const selected = placedPatients.find((patient) => patient.id === selectedId) ?? null;
   const runKey = `${phase}:${patients.map((patient) => patient.id).join("|")}:${sources.length}`;
   const activeGroup = selected ? groups.find((group) => group.includes(selected.id)) ?? null : null;
@@ -387,10 +414,14 @@ export default function CohortField({
   };
 
   const hubFill = phase === "failed" ? "var(--status-blocked-fg)" : phase === "idle" ? "var(--neutral-400)" : "var(--action-primary)";
-  const hubKicker = phase === "running" ? "WRITING" : phase === "failed" ? "RUN FAILED" : phase === "idle" ? "NO RUN YET" : (report?.kicker ?? "PANEL REPORT").split("·")[0]?.trim() || "PANEL REPORT";
-  const hubTitle = wrapTitle(phase === "ready" || phase === "empty" ? report?.title || "Panel report" : phase === "running" ? "Checking the panel" : phase === "failed" ? "No report" : "Start a run");
+  const hubKicker = phase === "running" ? (stage === "literature" ? "READING" : "REVIEWING") : phase === "failed" ? "RUN FAILED" : phase === "idle" ? "NO RUN YET" : (report?.kicker ?? "PANEL REPORT").split("·")[0]?.trim() || "PANEL REPORT";
+  const hubTitle = wrapTitle(phase === "ready" || phase === "empty" ? report?.title || "Panel report" : phase === "running" ? (stage === "literature" ? "Searching the literature" : "Checking each chart") : phase === "failed" ? "No report" : "Start a run");
   const selectedEdges = selected ? edges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const panelIds = new Set<string>((showCard || showVoice) && selected ? (activeGroup ?? [selected.id]) : []);
+  // While a patient card is open, the rest of the graph steps back so the card's subject stands out.
+  const focusIds = showCard && !showVoice && !draggingNode ? panelIds : new Set<string>();
+  const focusSources = new Set(selectedEdges.flatMap((edge) => [edge.from, edge.to]));
+  const fade = (focused: boolean) => ({ opacity: focusIds.size > 0 && !focused ? 0.28 : 1, transition: "opacity 220ms ease" });
   const panelAnchor = groupMembers.length > 1 ? (({ cx, cy, r }) => ({ px: cx, py: cy, r }))(clusterOf(groupMembers)) : selected ? { px: selected.px, py: selected.py, r: selected.r * 1.3 } : { px: CX, py: CY, r: HUB_R };
 
   return (
@@ -403,7 +434,7 @@ export default function CohortField({
         reset();
       }}
     >
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" role="img" aria-label="Patient cohort map centred on the panel report">
+      <svg ref={svgRef} viewBox={`${(W - W * stretch) / 2} 0 ${W * stretch} ${H}`} className="absolute inset-0 h-full w-full" role="img" aria-label="Patient cohort map centred on the panel report">
         <defs>
           <radialGradient id="hub-glow">
             <stop offset="0%" stopColor="var(--action-primary)" stopOpacity="0.28" />
@@ -412,13 +443,16 @@ export default function CohortField({
         </defs>
         <g ref={viewportRef}>
           <g key={runKey}>
-            <circle cx={CX} cy={CY} r={QUIET_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.7" />
-            <circle cx={CX} cy={CY} r={PATIENT_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.55" />
-            <circle cx={CX} cy={CY} r={SOURCE_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.45" />
+            <g style={fade(false)}>
+              <ellipse cx={CX} cy={CY} rx={QUIET_RING * spread} ry={QUIET_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.7" />
+              <ellipse cx={CX} cy={CY} rx={PATIENT_RING * spread} ry={PATIENT_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.55" />
+              <ellipse cx={CX} cy={CY} rx={SOURCE_RING * spread} ry={SOURCE_RING} fill="none" stroke="var(--border-default)" strokeDasharray="3 7" opacity="0.45" />
+            </g>
 
             {placedQuiet.map((dot, index) => (
               <motion.line
                 key={`q-${index}`}
+                style={fade(false)}
                 x1={CX}
                 y1={CY}
                 x2={dot.px}
@@ -434,6 +468,7 @@ export default function CohortField({
               placedSources.map((source, index) => (
                 <motion.line
                   key={`se-${source.id}`}
+                  style={fade(focusSources.has(source.id))}
                   x1={CX}
                   y1={CY}
                   x2={source.px}
@@ -449,17 +484,18 @@ export default function CohortField({
             {placedPatients.map((patient, index) => {
               const active = selectedId === patient.id || hoverId === patient.id;
               return (
-                <motion.line
-                  key={`pe-${patient.id}`}
-                  x1={CX}
-                  y1={CY}
-                  x2={patient.px}
-                  y2={patient.py}
-                  stroke={levelColors(patient.level).node}
-                  initial={{ pathLength: 0, opacity: 0, strokeWidth: 1.5 }}
-                  animate={{ pathLength: 1, opacity: active ? 1 : 0.75, strokeWidth: active ? 3 : 1.5 }}
-                  transition={{ pathLength: { delay: 0.35 + index * 0.07, duration: 0.7, ease: "easeOut" }, opacity: { duration: 0.2 }, strokeWidth: { duration: 0.2 } }}
-                />
+                <g key={`pe-${patient.id}`} style={fade(focusIds.has(patient.id))}>
+                  <motion.line
+                    x1={CX}
+                    y1={CY}
+                    x2={patient.px}
+                    y2={patient.py}
+                    stroke={levelColors(patient.level).node}
+                    initial={{ pathLength: 0, opacity: 0, strokeWidth: 1.5 }}
+                    animate={{ pathLength: 1, opacity: active ? 1 : 0.75, strokeWidth: active ? 3 : 1.5 }}
+                    transition={{ pathLength: { delay: 0.35 + index * 0.07, duration: 0.7, ease: "easeOut" }, opacity: { duration: 0.2 }, strokeWidth: { duration: 0.2 } }}
+                  />
+                </g>
               );
             })}
             {selectedEdges.map((edge) => {
@@ -485,7 +521,7 @@ export default function CohortField({
 
             {/* Quiet patients: connected to the report but not matched. Purely visual, so no hit area. */}
             {placedQuiet.map((dot, index) => (
-              <g key={`qd-${index}`} transform={`translate(${dot.px} ${dot.py})`} style={{ pointerEvents: "none" }}>
+              <g key={`qd-${index}`} transform={`translate(${dot.px} ${dot.py})`} style={{ pointerEvents: "none", ...fade(false) }}>
                 <motion.path
                   d="M0,-5.5 L5,3.5 L-5,3.5 Z"
                   fill="var(--action-primary)"
@@ -496,7 +532,9 @@ export default function CohortField({
               </g>
             ))}
 
-            <g data-interactive onClick={clickHub} className="cursor-pointer">
+            {phase === "running" && <RunActivity stage={stage} charts={placedQuiet} sources={showSources ? placedSources : []} still={still} stretch={spread} />}
+
+            <g data-interactive onClick={clickHub} className="cursor-pointer" style={fade(false)}>
               <circle cx={CX} cy={CY} r={HUB_R * 2.4} fill="url(#hub-glow)" style={{ pointerEvents: "none" }} />
               <motion.circle
                 cx={CX}
@@ -519,18 +557,13 @@ export default function CohortField({
                   </tspan>
                 ))}
               </text>
-              {graphReady && (
-                <text x={CX} y={CY + HUB_R - 10} textAnchor="middle" fill="var(--text-on-primary)" fontFamily="var(--font-inter), Inter, sans-serif" fontSize="9" opacity="0.8" style={{ pointerEvents: "none" }}>
-                  {patients.length} to review
-                </text>
-              )}
             </g>
 
             {showSources &&
               placedSources.map((source, index) => {
                 const hovered = hoverId === source.id;
                 return (
-                  <g key={source.id} data-interactive transform={`translate(${source.px} ${source.py})`} className="cursor-pointer" onClick={() => clickSource(source)} onPointerEnter={() => setHoverId(source.id)} onPointerLeave={() => setHoverId(null)}>
+                  <g key={source.id} data-interactive transform={`translate(${source.px} ${source.py})`} className="cursor-pointer" style={fade(focusSources.has(source.id) || hovered)} onClick={() => clickSource(source)} onPointerEnter={() => setHoverId(source.id)} onPointerLeave={() => setHoverId(null)}>
                     <motion.rect
                       x="-8"
                       y="-8"
@@ -559,7 +592,7 @@ export default function CohortField({
               if (members.length < 2) return null;
               const cluster = clusterOf(members);
               return (
-                <g key={`group-${group.join("+")}`} style={{ pointerEvents: "none" }}>
+                <g key={`group-${group.join("+")}`} style={{ pointerEvents: "none", ...fade(group.some((id) => focusIds.has(id))) }}>
                   <motion.circle cx={cluster.cx} cy={cluster.cy} fill="var(--action-primary)" stroke="var(--action-primary)" strokeWidth="1.2" strokeDasharray="5 5" initial={{ r: 0, fillOpacity: 0, strokeOpacity: 0 }} animate={{ r: cluster.r, fillOpacity: 0.08, strokeOpacity: 0.55 }} transition={SPRING} />
                   {members.map((member, memberIndex) =>
                     members.slice(memberIndex + 1).map((other) => (
@@ -586,6 +619,7 @@ export default function CohortField({
                   data-interactive
                   transform={`translate(${patient.px} ${patient.py})`}
                   className={isDragging ? "cursor-grabbing" : "cursor-grab"}
+                  style={fade(focusIds.has(patient.id) || hovered)}
                   onClick={() => clickPatient(patient)}
                   onPointerDown={(event) => startNodeDrag(event, patient)}
                   onPointerEnter={() => setHoverId(patient.id)}
@@ -770,6 +804,62 @@ function AnchoredPanel({ anchor, accent, transform, svgRef, fieldRef, vx, vy, vk
         {children}
       </motion.div>
     </>
+  );
+}
+
+/** The trailing wedge of the sweep: from the leading edge back through `span` degrees. */
+function sector(span: number): string {
+  const angle = (-span * Math.PI) / 180;
+  return `M ${CX} ${CY} L ${CX + QUIET_RING} ${CY} A ${QUIET_RING} ${QUIET_RING} 0 0 0 ${CX + Math.cos(angle) * QUIET_RING} ${CY + Math.sin(angle) * QUIET_RING} Z`;
+}
+
+/**
+ * What the graph does while a run is in flight. Reading the literature is a sweep out from the report;
+ * checking the charts is each chart lighting up in turn and sending its reading in to the report.
+ */
+function RunActivity({ stage, charts, sources, still, stretch }: { stage: RunStage; charts: Placed<QuietDot>[]; sources: Placed<SourceNode>[]; still: boolean; stretch: number }) {
+  const accent = "var(--action-primary)";
+  const orbit = 2 * Math.PI * (HUB_R + 7);
+  if (still) return <circle cx={CX} cy={CY} r={HUB_R + 7} fill="none" stroke={accent} strokeWidth="2" strokeDasharray="4 6" opacity="0.6" style={{ pointerEvents: "none" }} />;
+  const step = 0.2;
+  const cycle = Math.max(charts.length * step, 2.4);
+  const flight = (index: number) => ({ duration: 1.5, delay: index * step + 0.15, repeat: Infinity, repeatDelay: cycle - 1.5, ease: "easeIn" as const });
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {stage === "literature" && (
+        <g transform={`translate(${CX} 0) scale(${stretch} 1) translate(${-CX} 0)`}>
+          {[0, 1, 2].map((index) => (
+            <motion.circle key={`wave-${index}`} cx={CX} cy={CY} fill="none" stroke={accent} strokeWidth="1.2" initial={{ r: HUB_R, opacity: 0 }} animate={{ r: [HUB_R, QUIET_RING], opacity: [0.5, 0] }} transition={{ duration: 3, delay: index, repeat: Infinity, ease: "easeOut" }} />
+          ))}
+          <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6 }}>
+            <g>
+              {[64, 38, 16].map((span) => (
+                <path key={span} d={sector(span)} fill={accent} opacity="0.07" />
+              ))}
+              <line x1={CX} y1={CY} x2={CX + QUIET_RING} y2={CY} stroke={accent} strokeWidth="1.5" opacity="0.55" />
+              <animateTransform attributeName="transform" type="rotate" from={`0 ${CX} ${CY}`} to={`360 ${CX} ${CY}`} dur="4.5s" repeatCount="indefinite" />
+            </g>
+          </motion.g>
+        </g>
+      )}
+      {stage === "contrast" && (
+        <>
+          {sources.map((source, index) => (
+            <motion.circle key={`read-${source.id}`} cx={source.px} cy={source.py} fill="none" stroke="var(--source-ink)" strokeWidth="1.2" initial={{ r: 10, opacity: 0 }} animate={{ r: [10, 24], opacity: [0.55, 0] }} transition={{ duration: 1.8, delay: index * 0.45, repeat: Infinity, ease: "easeOut" }} />
+          ))}
+          {charts.map((chart, index) => (
+            <g key={`chart-${index}`}>
+              <motion.circle cx={chart.px} cy={chart.py} fill={accent} initial={{ r: 4, opacity: 0 }} animate={{ r: [4, 15], opacity: [0.45, 0] }} transition={{ duration: 1.1, delay: index * step, repeat: Infinity, repeatDelay: cycle - 1.1, ease: "easeOut" }} />
+              <motion.circle r="2.6" fill={accent} initial={{ cx: chart.px, cy: chart.py, opacity: 0 }} animate={{ cx: [chart.px, CX], cy: [chart.py, CY], opacity: [0, 1, 1, 0] }} transition={{ ...flight(index), opacity: { ...flight(index), ease: "linear", times: [0, 0.15, 0.8, 1] } }} />
+            </g>
+          ))}
+        </>
+      )}
+      <g>
+        <circle cx={CX} cy={CY} r={HUB_R + 7} fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeDasharray={`${orbit * 0.22} ${orbit * 0.78}`} />
+        <animateTransform attributeName="transform" type="rotate" from={`0 ${CX} ${CY}`} to={`360 ${CX} ${CY}`} dur={stage === "literature" ? "1.6s" : "1.1s"} repeatCount="indefinite" />
+      </g>
+    </g>
   );
 }
 
@@ -969,7 +1059,7 @@ function VoicePanel({ patientName, muted, you, reply, error, onToggleMute, onEnd
           End voice
         </button>
       </div>
-      <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">Voice discusses the report only. It can&apos;t search, draft, or send.</p>
+      <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">Voice discusses the report, and can draft a message or save a note. It can&apos;t search or send.</p>
     </section>
   );
 }

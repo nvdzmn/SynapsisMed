@@ -29,7 +29,8 @@ export default function MessageDrawer({ patientName, draft, points, approved, se
   const locked = approved || sent || drafting;
   const rewriting = drafting && draft.length > 0;
   const noPoints = !points.some((point) => point.checked);
-  const rewriteOff = drafting || sending || sent || approved || noPoints;
+  // With no points ticked the message is personal, so the writer needs to be told what to say.
+  const rewriteOff = drafting || sending || sent || approved || (noPoints && !instruction.trim());
   const rewrite = () => {
     if (rewriteOff) return;
     onRewrite(instruction);
@@ -102,7 +103,7 @@ export default function MessageDrawer({ patientName, draft, points, approved, se
             onKeyDown={(event) => {
               if (event.key === "Enter") rewrite();
             }}
-            placeholder="What should change? (optional)"
+            placeholder={noPoints ? "What should the message say?" : "What should change? (optional)"}
             aria-label="Rewrite instruction"
             className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink outline-none placeholder:text-muted focus:border-violet disabled:cursor-not-allowed disabled:bg-canvas"
           />
@@ -111,7 +112,7 @@ export default function MessageDrawer({ patientName, draft, points, approved, se
           </button>
         </div>
         <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">
-          {approved ? "Untick approval to rewrite." : noPoints ? "Tick at least one point to rewrite." : "Rewrites use the points ticked above and replace the text here."}
+          {approved ? "Untick approval to rewrite." : noPoints ? "No points ticked: the message is written only from what you type here, with no findings." : "Rewrites use the points ticked above and replace the text here."}
         </p>
       </section>
       {blocked && (
@@ -142,7 +143,7 @@ export default function MessageDrawer({ patientName, draft, points, approved, se
       {sent ? (
         <div className="rounded-lg border border-cleared-border bg-cleared-bg px-3.5 py-3">
           <p className="text-sm font-semibold text-cleared-fg">✓ Sent to test inbox</p>
-          <p className="mt-1 text-[11px] tracking-[0.055px] text-secondary">{sentDetail || "Synthetic patient, no real delivery"}</p>
+          <p className="mt-1 text-[11px] tracking-[0.055px] text-secondary">{sentDetail || "Emailed to the test inbox · synthetic patient"}</p>
         </div>
       ) : (
         <>

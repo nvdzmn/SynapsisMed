@@ -7,6 +7,8 @@ type NotesDrawerProps = {
   patientId: string;
   patientName: string;
   runId: string | null;
+  /** Changes when a note is saved from outside the drawer, such as by voice, so the list reloads. */
+  version?: number;
   onChanged: () => void;
   onClose: () => void;
 };
@@ -18,7 +20,7 @@ function when(iso: string): string {
 }
 
 /** The physician's own notes on one patient. The starting bullets come from this report's review; saved notes are never sent to the patient or to a model. */
-export default function NotesDrawer({ patientId, patientName, runId, onChanged, onClose }: NotesDrawerProps) {
+export default function NotesDrawer({ patientId, patientName, runId, version = 0, onChanged, onClose }: NotesDrawerProps) {
   const [notes, setNotes] = useState<PatientNote[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -37,7 +39,7 @@ export default function NotesDrawer({ patientId, patientName, runId, onChanged, 
     return () => {
       live = false;
     };
-  }, [patientId]);
+  }, [patientId, version]);
 
   /** Fills the box with bullets from this report. Anything the physician has already typed is left alone. */
   const suggest = async (replace: boolean) => {
@@ -159,6 +161,7 @@ export default function NotesDrawer({ patientId, patientName, runId, onChanged, 
                   <p className="text-[11px] tracking-[0.055px] text-muted">
                     {when(note.created_at)}
                     {note.run_id && note.run_id === runId ? " · this report" : ""}
+                    {note.source === "voice" ? " · by voice" : ""}
                   </p>
                   <button type="button" disabled={removingId === note.note_id} onClick={() => void remove(note.note_id)} className={button.small}>
                     {removingId === note.note_id ? "Deleting…" : "Delete"}

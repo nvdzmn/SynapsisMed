@@ -41,6 +41,8 @@ type ReportPanelProps = {
   onSelectPatient: (id: string) => void;
   onRetry: () => void;
   onOpenLast: () => void;
+  /** The schedule as the end of a sentence, such as "on weekdays at 07:00". Null when scheduled runs are off. */
+  scheduleLabel?: string | null;
   onShowHistory: () => void;
   onOpenReport: (id: string) => void;
 };
@@ -49,12 +51,26 @@ export default function ReportPanel(props: ReportPanelProps) {
   const { phase, searchOpen, browsing } = props;
   return (
     <div className="flex h-full flex-col gap-[18px] overflow-y-auto p-5">
-      {searchOpen ? <SearchComposer {...props} /> : <SearchCollapsed onOpen={props.onOpenSearch} />}
-      {!searchOpen && !browsing ? (
-        <button type="button" onClick={props.onShowHistory} className="self-start text-[11px] font-semibold tracking-[0.055px] text-violet">
-          ← Reports
-        </button>
-      ) : null}
+      {searchOpen ? (
+        <SearchComposer {...props} />
+      ) : (
+        <div className="flex h-8 items-center justify-between gap-3">
+          {browsing ? (
+            <p className="text-sm font-semibold tracking-[0.2px] text-muted">REPORTS</p>
+          ) : (
+            <button type="button" onClick={props.onShowHistory} className="-ml-2 inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-violet transition-colors hover:bg-cleared-bg">
+              <span aria-hidden className="text-base leading-none">←</span>
+              Reports
+            </button>
+          )}
+          <button type="button" onClick={props.onOpenSearch} aria-label="Ask your panel a question" title="Ask your panel a question" className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-cleared-border text-violet transition-colors hover:bg-cleared-bg">
+            <svg aria-hidden viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13.6 3.4a1.7 1.7 0 0 1 2.4 0l.6.6a1.7 1.7 0 0 1 0 2.4L7.4 15.6 3.5 16.5l.9-3.9 9.2-9.2Z" />
+              <path d="m12.2 4.8 3 3" />
+            </svg>
+          </button>
+        </div>
+      )}
       {browsing ? <HistoryList {...props} /> : searchOpen ? <MinimizedReport phase={phase} report={props.report} reviewCount={props.reviewCount} cohortSize={props.cohortSize} onShow={props.onCloseSearch} /> : <ReportBody {...props} />}
     </div>
   );
@@ -70,7 +86,6 @@ function formatStamp(iso?: string | null): string {
 function HistoryList({ history, historyLoading, historyError, openingId, onOpenReport }: ReportPanelProps) {
   return (
     <section className="space-y-3">
-      <p className="text-[11px] tracking-[0.055px] text-muted">REPORTS</p>
       {historyLoading ? (
         <div className="space-y-2">
           {["86%", "74%", "91%"].map((width) => (
@@ -147,17 +162,6 @@ function SourcesDropdown({ sources }: { sources: SourceNode[] }) {
           })}
         </ul>
       ) : null}
-    </div>
-  );
-}
-
-function SearchCollapsed({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div className="border-b border-line pb-4">
-      <button type="button" onClick={onOpen} className="flex h-10 w-full items-center gap-2.5 rounded-full border border-line bg-canvas px-3.5 text-sm text-muted">
-        <span aria-hidden>⌕</span>
-        Ask your panel a question…
-      </button>
     </div>
   );
 }
@@ -269,13 +273,13 @@ function MinimizedReport({ phase, report, reviewCount, cohortSize, onShow }: { p
 }
 
 function ReportBody(props: ReportPanelProps) {
-  if (props.phase === "idle") return <IdleReport cohortSize={props.cohortSize} />;
+  if (props.phase === "idle") return <IdleReport cohortSize={props.cohortSize} scheduleLabel={props.scheduleLabel} />;
   if (props.phase === "running") return <RunningReport />;
   if (props.phase === "failed") return <FailedReport error={props.error} onRetry={props.onRetry} onSample={props.onSample} onOpenLast={props.onOpenLast} />;
   return <ReadyReport {...props} />;
 }
 
-function IdleReport({ cohortSize }: { cohortSize: number | null }) {
+function IdleReport({ cohortSize, scheduleLabel }: { cohortSize: number | null; scheduleLabel?: string | null }) {
   const count = cohortSize ? `${cohortSize} synthetic patients` : "your synthetic patients";
   return (
     <>
@@ -285,7 +289,7 @@ function IdleReport({ cohortSize }: { cohortSize: number | null }) {
       </header>
       <div className="rounded-xl border border-dashed border-line px-5 py-6 text-sm leading-5 text-secondary">
         <p>Start a run to check recent literature against {count}. The report will appear here, one section per matched patient.</p>
-        <p className="mt-4">Or wait for the scheduled run on weekdays at 07:00. Scheduled runs never send mail.</p>
+        <p className="mt-4">{scheduleLabel ? `Or wait for the scheduled run ${scheduleLabel}. Scheduled runs never send mail.` : "Scheduled runs are off, so a report is written only when you start a run."}</p>
       </div>
       <Caution />
     </>
@@ -344,30 +348,22 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
     <>
       <header>
         <p className="text-[11px] tracking-[0.055px] text-muted">{report?.kicker || "PANEL REPORT"}</p>
-        <h2 className="font-display text-lg font-semibold leading-[26px] tracking-[-0.09px] text-ink">{report?.title || "Panel report"}</h2>
+        <h2 className="font-display text-xl font-semibold leading-7 tracking-[-0.1px] text-ink">{report?.title || "Panel report"}</h2>
       </header>
       {sources.length > 0 ? <SourcesDropdown sources={sources} /> : null}
       {report?.placeholder && <Caution text="Sample report. The sources are fixed landmark trials, not a live PubMed search. The write-up is from Grok." />}
       <Caution text={report?.placeholder ? "Synthetic records. Decision support, not a treatment recommendation." : report?.footer} />
       <Section index="1" title="THE QUESTION THIS RUN ASKED">
-        <p className="text-sm leading-5 text-ink">{report?.question}</p>
+        <p className="text-base leading-6 text-ink">{report?.question}</p>
       </Section>
       <Section index="2" title="WHAT THE LITERATURE SUPPORTS">
-        {(report?.supports ?? []).map((line) => (
-          <p key={line} className="text-sm leading-5 text-ink">
-            {line}
-          </p>
-        ))}
+        <Findings lines={report?.supports ?? []} rule="border-violet" />
       </Section>
       <Section index="3" title="WHAT IT DOES NOT SUPPORT">
-        {(report?.limits ?? []).map((line) => (
-          <p key={line} className="text-sm leading-5 text-ink">
-            {line}
-          </p>
-        ))}
+        <Findings lines={report?.limits ?? []} rule="border-caution-border" />
       </Section>
-      <section className="space-y-1.5">
-        <h3 className="text-xs font-bold tracking-[0.06px] text-violet">4&nbsp;&nbsp;PATIENTS TO REVIEW</h3>
+      <section className="space-y-2 pt-1">
+        <h3 className="text-[15px] font-bold leading-5 tracking-[0.2px] text-violet">4&nbsp;&nbsp;PATIENTS TO REVIEW</h3>
         {phase === "empty" || reviewCount === 0 ? (
           <div className="rounded-lg border border-cleared-border bg-cleared-bg px-3.5 py-3">
             <p className="text-sm font-semibold text-cleared-fg">✓ No patients to review this run</p>
@@ -380,8 +376,8 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
             return (
               <button key={patient.id} type="button" onClick={() => onSelectPatient(patient.id)} className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left ${selected ? "border-violet bg-cleared-bg" : "border-line bg-surface"}`}>
                 <span>
-                  <span className="block text-sm font-semibold text-ink">{patient.name}</span>
-                  <span className="block text-[11px] tracking-[0.055px] text-secondary">{patient.summary}</span>
+                  <span className="block text-base font-semibold leading-6 text-ink">{patient.name}</span>
+                  <span className="block text-xs leading-4 text-secondary">{patient.summary}</span>
                 </span>
                 <span className="rounded px-2 py-0.5 text-xs font-medium tracking-[0.06px]" style={{ background: colors.bg, color: colors.fg, border: `1px solid ${colors.border}` }}>
                   {patient.level}
@@ -395,10 +391,37 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
   );
 }
 
+/** Splits a finding into the clause that says who it is about and the rest, so the eye can land on the subject first. */
+function leadOf(line: string): [string, string] {
+  if (!/^(for|in|across|among|with|without)\b/i.test(line)) return ["", line];
+  // The subject can itself be a list with commas, so the cut is the comma that the main clause follows.
+  const clause = /,(?=\s(?:a|an|the|one|two|three|no|none|this|these|those|it|there|each|every|some|several)\b)/i.exec(line);
+  if (!clause || clause.index < 12 || clause.index > 90) return ["", line];
+  return [line.slice(0, clause.index + 1), line.slice(clause.index + 1)];
+}
+
+/** The report's findings as separate items: one rule down the side of each, with room between them. */
+function Findings({ lines, rule }: { lines: string[]; rule: string }) {
+  if (lines.length === 1) return <p className="text-base leading-6 text-ink">{lines[0]}</p>;
+  return (
+    <ul className="space-y-3 pt-1">
+      {lines.map((line) => {
+        const [lead, rest] = leadOf(line);
+        return (
+          <li key={line} className={`border-l-2 pl-3 text-base leading-6 text-ink ${rule}`}>
+            {lead && <span className="font-semibold">{lead}</span>}
+            {rest}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function Section({ index, title, children }: { index: string; title: string; children: ReactNode }) {
   return (
-    <section className="space-y-1.5">
-      <h3 className="text-xs font-bold tracking-[0.06px] text-violet">
+    <section className="space-y-2 pt-1">
+      <h3 className="text-[15px] font-bold leading-5 tracking-[0.2px] text-violet">
         {index}&nbsp;&nbsp;{title}
       </h3>
       {children}

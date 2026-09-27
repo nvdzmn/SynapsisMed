@@ -286,7 +286,7 @@ export function cohortLabel(size: number | null): string {
 }
 
 /** A note the physician keeps for themselves. It is never sent to the patient or to a model. */
-export type PatientNote = { note_id: string; patient_id: string; run_id?: string | null; created_at: string; text: string };
+export type PatientNote = { note_id: string; patient_id: string; run_id?: string | null; created_at: string; text: string; source?: "typed" | "voice" };
 
 export async function listNotes(patientId: string): Promise<PatientNote[]> {
   const response = await fetch(`${API_URL}/api/patients/${patientId}/notes`);
@@ -295,11 +295,11 @@ export async function listNotes(patientId: string): Promise<PatientNote[]> {
   return Array.isArray(body) ? body : [];
 }
 
-export async function addNote(patientId: string, text: string, runId: string | null): Promise<PatientNote> {
+export async function addNote(patientId: string, text: string, runId: string | null, source: "typed" | "voice" = "typed"): Promise<PatientNote> {
   const response = await fetch(`${API_URL}/api/patients/${patientId}/notes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, run_id: runId ?? undefined }),
+    body: JSON.stringify({ text, run_id: runId ?? undefined, source }),
   });
   if (!response.ok) throw new Error(await errorMessage(response, "Could not save the note"));
   return (await response.json()) as PatientNote;

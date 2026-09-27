@@ -4,19 +4,22 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from services.pipeline import (approve_draft, cohort_agent, get_run, ident, literature_agent,
                                load_cohort, note_prefill_agent, now, patient_message_agent, phenotype_bundle, placeholder_dossier, save_run, seed_cohort, voice_context)
 from services.xai import create_voice_secret, load_local_env
+from services.mail import mail_status, send_patient_message
 load_local_env()
 from services import store
 from services.store import latest_completed_run
 
 
 class DraftRequest(BaseModel):
-    points: list[str] = Field(min_length=1)
+    # No points means a personal message, written only from the instruction.
+    points: list[str] = Field(default_factory=list)
     instruction: str | None = Field(None, max_length=500)
     previous_text: str | None = Field(None, max_length=8000)
 class ApproveRequest(BaseModel):
@@ -24,6 +27,7 @@ class ApproveRequest(BaseModel):
 class NoteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     run_id: str | None = None
+    source: Literal["typed", "voice"] = "typed"
 
 async def scheduled_runs():
     """Small v1 scheduler: wake hourly and start one weekday run after 07:00 UTC."""
@@ -158,8 +162,22 @@ async def draft_patient_message(run_id: str, patient_id: str, request: DraftRequ
 
 @app.post("/api/drafts/{draft_id}/approve")
 async def approve_patient_message(draft_id: str, request: ApproveRequest):
-    draft = approve_draft(store.get_draft(draft_id), request.final_text)
+    draft = store.get_draft(draft_id)
+    if (draft.get("delivery") or {}).get("status") == "delivered": raise HTTPException(409, "This message has already been sent")
+    draft = approve_draft(draft, request.final_text)
+    patient = known_patient(draft["patient_id"])
+    try:
+        sent = await send_patient_message((draft.get("model_draft") or {}).get("subject") or "", request.final_text, patient["name"])
+    except HTTPException as exc:
+        # Approved but undelivered is recorded as such, so the audit trail never shows a send that did not happen.
+        draft["delivery"] = {"status": "failed", "error": str(exc.detail), "attempted_at": now()}; store.save_draft(draft)
+        raise
+    draft["delivery"] = {"status": "delivered", "sent_at": now(), **sent}
     store.save_draft(draft); return draft
+
+@app.get("/api/mail/status")
+async def read_mail_status():
+    return mail_status()
 
 def known_patient(patient_id: str) -> dict:
     patient = next((p for p in load_cohort() if p["id"] == patient_id), None)
@@ -180,7 +198,7 @@ async def add_note(patient_id: str, request: NoteRequest):
     # The physician's own notes: stored as written, never sent to the patient or to a model.
     known_patient(patient_id)
     if not request.text.strip(): raise HTTPException(400, "Write something before saving")
-    note = {"note_id": ident("nt"), "patient_id": patient_id, "run_id": request.run_id, "created_at": now(), "text": request.text.strip()}
+    note = {"note_id": ident("nt"), "patient_id": patient_id, "run_id": request.run_id, "created_at": now(), "text": request.text.strip(), "source": request.source}
     store.add_note(note)
     return note
 

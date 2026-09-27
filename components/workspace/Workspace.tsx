@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type Phase } from "../../lib/workspace-data";
-import { approveDraft, cohortLabel, countNotes, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
+import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type PanelPatient, type Phase } from "../../lib/workspace-data";
+import { addNote, approveDraft, cohortLabel, countNotes, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
 import CohortField from "./CohortField";
 import MessageDrawer from "./MessageDrawer";
 import NotesDrawer from "./NotesDrawer";
 import ReportPanel, { ConditionMenu } from "./ReportPanel";
 import RunTracker from "./RunTracker";
-import { useVoiceSession } from "./useVoiceSession";
+import ScheduleControl, { scheduleInSentence, useSchedule } from "./ScheduleControl";
+import { useVoiceSession, type VoiceToolResult } from "./useVoiceSession";
 
 type MessagePoint = { text: string; checked: boolean };
 
@@ -54,16 +55,62 @@ export default function Workspace() {
   const [historyError, setHistoryError] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [noteCounts, setNoteCounts] = useState<Record<string, number>>({});
+  const [notesVersion, setNotesVersion] = useState(0);
+  const [schedule, setSchedule] = useSchedule();
   const fileRef = useRef<HTMLInputElement>(null);
   const attachedFile = useRef<File | null>(null);
   const pollTimer = useRef<number | null>(null);
   const cohortRef = useRef<number | null>(null);
-  const voice = useVoiceSession(runId);
-
   const patient = presented?.patients.find((item) => item.id === selectedId) ?? presented?.patients[0] ?? null;
   const reasons = patient ? blockedReasons(draftText, patient.name, names) : [];
   const approved = Boolean(patient) && approvedFor === `${patient?.id}:${draftText}` && reasons.length === 0 && !drafting;
   const graphReady = phase === "ready";
+
+  /** Matches what the physician said to a flagged patient in the open report: a full name or a first name. */
+  const findPatient = (spoken: unknown): PanelPatient | null => {
+    const wanted = String(spoken ?? "").trim().toLowerCase();
+    if (!wanted) return null;
+    const flagged = presented?.patients ?? [];
+    return flagged.find((item) => item.name.toLowerCase() === wanted) ?? flagged.find((item) => item.name.toLowerCase().split(" ")[0] === wanted.split(" ")[0]) ?? null;
+  };
+
+  /** What the voice agent is allowed to do. It prepares work on screen; approving and sending stay with the physician. */
+  const runVoiceTool = async (name: string, args: Record<string, unknown>): Promise<VoiceToolResult> => {
+    const target = findPatient(args.patient_name);
+    if (!target) return { ok: false, detail: `No flagged patient by that name in this report. Flagged: ${(presented?.patients ?? []).map((item) => item.name).join(", ") || "none"}.` };
+    if (name === "draft_message") {
+      const instruction = typeof args.instruction === "string" ? args.instruction : "";
+      // Left out, the choice is kept as it is on screen; said either way, it sets the ticks.
+      const findings = typeof args.include_findings === "boolean" ? args.include_findings : null;
+      if (findings === false && !instruction.trim()) return { ok: false, detail: "A message without findings needs to be told what to say." };
+      const redraft = drawer === "message" && patient?.id === target.id && draftText.trim() && !sent;
+      if (redraft) {
+        // The voice model tends to say "include findings" on every redraft, so a personal message only gets them back when the physician asks.
+        const wantsFindings = findings === true && /finding|result|medical|report|evidence|research/i.test(instruction);
+        const change = findings === false ? false : wantsFindings ? true : null;
+        const ticked = change === null ? messagePoints : messagePoints.map((point) => ({ ...point, checked: change }));
+        if (change !== null) setMessagePoints(ticked);
+        const points = ticked.filter((point) => point.checked).map((point) => point.text);
+        if (!points.length && !instruction.trim()) return { ok: false, detail: "No findings are ticked and nothing was said about what to write." };
+        const done = await writeDraft(target, points, { instruction, previousText: draftText });
+        return done ? { ok: true, detail: `The message for ${target.name} was rewritten and is on screen. It has not been sent; the physician approves and sends it on screen.` } : { ok: false, detail: "The writer could not rewrite the message. The earlier text is unchanged." };
+      }
+      const done = await openMessage(target, instruction, true, findings !== false);
+      return done ? { ok: true, detail: `A draft message for ${target.name} is on screen for review. It has not been sent; the physician approves and sends it on screen.` } : { ok: false, detail: "The writer could not draft the message." };
+    }
+    if (name === "save_note") {
+      const text = typeof args.text === "string" ? args.text.trim() : "";
+      if (!text) return { ok: false, detail: "There was nothing to save." };
+      await addNote(target.id, text, runId, "voice");
+      setSelectedId(target.id);
+      setDrawer("notes");
+      setNotesVersion((current) => current + 1);
+      void loadNoteCounts();
+      return { ok: true, detail: `Saved a private note for ${target.name}. It is on screen and only the physician sees it.` };
+    }
+    return { ok: false, detail: "That action is not available by voice." };
+  };
+  const voice = useVoiceSession(runId, runVoiceTool);
 
   const loadHistory = async () => {
     try {
@@ -226,12 +273,16 @@ export default function Workspace() {
   /** From the graph's corner button: cover the whole report. */
   const openReportVoice = () => startVoice(null);
 
-  const openMessage = async () => {
-    if (!patient || !runId) return;
-    const texts = patient.fields.filter(Boolean);
-    const points = (texts.length ? texts : ["The findings in this run that apply to this chart"]).map((text) => ({ text, checked: true }));
-    voice.stop();
-    setFocus("patient");
+  /** Opens the message drawer with a first draft. Voice passes its own target and keeps the conversation running. */
+  const openMessage = async (target: PanelPatient | null = patient, instruction = "", fromVoice = false, findings = true): Promise<boolean> => {
+    if (!target || !runId) return false;
+    const texts = target.fields.filter(Boolean);
+    const points = (texts.length ? texts : ["The findings in this run that apply to this chart"]).map((text) => ({ text, checked: findings }));
+    if (fromVoice) setSelectedId(target.id);
+    else {
+      voice.stop();
+      setFocus("patient");
+    }
     setMessagePoints(points);
     setDraftText("");
     setDraftId(null);
@@ -240,7 +291,7 @@ export default function Workspace() {
     setSentDetail("");
     setMessageError("");
     setDrawer("message");
-    await writeDraft(points.map((point) => point.text));
+    return writeDraft(target, points.filter((point) => point.checked).map((point) => point.text), instruction.trim() ? { instruction, previousText: "" } : undefined);
   };
 
   /** The physician's own notes on this patient. Nothing here is drafted by a model or sent anywhere. */
@@ -252,17 +303,19 @@ export default function Workspace() {
   };
 
   /** Asks the writer for a patient message. With `rewrite`, the current text stays on screen until the new one arrives. */
-  const writeDraft = async (points: string[], rewrite?: { instruction: string; previousText: string }) => {
-    if (!patient || !runId) return;
+  const writeDraft = async (target: PanelPatient, points: string[], rewrite?: { instruction: string; previousText: string }): Promise<boolean> => {
+    if (!runId) return false;
     setDrafting(true);
     setMessageError("");
     try {
-      const draft = await createDraft(runId, patient.id, points, rewrite);
+      const draft = await createDraft(runId, target.id, points, rewrite);
       setDraftId(draft.draft_id);
       setDraftText(draft.edited_text || draft.model_draft?.body || "");
       setApprovedFor(null);
+      return true;
     } catch (cause) {
-      setMessageError(cause instanceof Error && cause.message ? cause.message : rewrite ? "Could not rewrite the message" : "Could not draft the message");
+      setMessageError(cause instanceof Error && cause.message ? cause.message : rewrite?.previousText ? "Could not rewrite the message" : "Could not draft the message");
+      return false;
     } finally {
       setDrafting(false);
     }
@@ -270,8 +323,8 @@ export default function Workspace() {
 
   const rewriteMessage = (instruction: string) => {
     const points = messagePoints.filter((point) => point.checked).map((point) => point.text);
-    if (!points.length || sent) return;
-    void writeDraft(points, { instruction, previousText: draftText });
+    if ((!points.length && !instruction.trim()) || sent || !patient) return;
+    void writeDraft(patient, points, { instruction, previousText: draftText });
   };
 
   const sendMessage = async () => {
@@ -281,7 +334,7 @@ export default function Workspace() {
     try {
       const result = await approveDraft(draftId, draftText);
       setSent(true);
-      setSentDetail(result.delivery?.recipient ? `${result.delivery.recipient} · synthetic patient, no real delivery` : "Synthetic patient, no real delivery");
+      setSentDetail(result.delivery?.recipient ? `Emailed to ${result.delivery.recipient} · synthetic patient` : "Emailed to the test inbox · synthetic patient");
     } catch (cause) {
       setApprovedFor(null);
       setMessageError(cause instanceof Error && cause.message ? cause.message : "Send was refused");
@@ -307,16 +360,14 @@ export default function Workspace() {
           <span className="rounded-xl border border-line bg-caution-bg px-2.5 py-1 text-xs font-medium tracking-[0.06px] text-caution-fg">{cohortLabel(cohortSize)}</span>
         </div>
         <div className="flex items-center gap-4">
-          <div className="whitespace-nowrap text-right">
-            <p className="text-sm font-semibold leading-5">Next scheduled run · Mon 07:00</p>
-            <p className="text-[11px] tracking-[0.055px] text-secondary">Weekdays at 07:00 · scheduled runs never send mail</p>
-          </div>
+          <ScheduleControl schedule={schedule} onSave={setSchedule} />
           <span className="grid h-7 min-w-8 place-items-center rounded-2xl bg-cleared-bg px-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">DO</span>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col gap-3.5 py-4 pl-6 pr-4">
           <RunTracker
+            scheduleLabel={scheduleInSentence(schedule)}
             phase={phase}
             literatureDone={literatureDone}
             contrastDone={contrastDone}
@@ -341,6 +392,7 @@ export default function Workspace() {
           />
           <CohortField
             phase={phase}
+            stage={literatureDone ? "contrast" : "literature"}
             patients={presented?.patients ?? []}
             quiet={presented?.quiet ?? []}
             sources={presented?.sources ?? []}
@@ -374,7 +426,7 @@ export default function Workspace() {
         </section>
         <aside className="relative flex w-[480px] shrink-0 flex-col border-l border-line bg-surface">
           {drawer === "notes" && patient ? (
-            <NotesDrawer key={patient.id} patientId={patient.id} patientName={patient.name} runId={runId} onChanged={() => void loadNoteCounts()} onClose={() => setDrawer(null)} />
+            <NotesDrawer key={patient.id} patientId={patient.id} patientName={patient.name} runId={runId} version={notesVersion} onChanged={() => void loadNoteCounts()} onClose={() => setDrawer(null)} />
           ) : drawer === "message" && patient ? (
             <MessageDrawer
               key={patient.id}
@@ -413,6 +465,7 @@ export default function Workspace() {
               conditionQuery={conditionQuery}
               selectedId={graphReady ? selectedId : null}
               cohortSize={cohortSize}
+              scheduleLabel={scheduleInSentence(schedule)}
               report={presented?.report ?? null}
               patients={presented?.patients ?? []}
               sources={presented?.sources ?? []}
