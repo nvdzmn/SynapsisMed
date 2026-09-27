@@ -14,6 +14,8 @@ export type PanelPatient = {
   fields: string[];
   mismatches: string[];
   review: string;
+  /** Short next-visit checks from the cohort agent. Runs without them show `review` as one line. */
+  checks?: string[];
 };
 
 export type SourceNode = {

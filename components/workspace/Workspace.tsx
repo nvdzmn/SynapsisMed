@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type Phase } from "../../lib/workspace-data";
-import { approveDraft, cohortLabel, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
+import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type PanelPatient, type Phase } from "../../lib/workspace-data";
+import { addNote, approveDraft, countNotes, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
 import CohortField from "./CohortField";
-import NoteDrawer from "./NoteDrawer";
+import MessageDrawer from "./MessageDrawer";
+import NotesDrawer from "./NotesDrawer";
 import ReportPanel, { ConditionMenu } from "./ReportPanel";
 import RunTracker from "./RunTracker";
-import { useVoiceSession } from "./useVoiceSession";
+import ScheduleControl, { scheduleInSentence, useSchedule } from "./ScheduleControl";
+import { useVoiceSession, type VoiceToolResult } from "./useVoiceSession";
 
-type NotePoint = { text: string; checked: boolean };
+type MessagePoint = { text: string; checked: boolean };
 
 function friendlyError(error: string): string {
   if (/temporarily unavailable|cannot connect to solr/i.test(error)) return "PubMed search is temporarily unavailable. Retry the run in a moment.";
@@ -28,7 +30,8 @@ export default function Workspace() {
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<"patient" | "voice" | null>(null);
-  const [noteOpen, setNoteOpen] = useState(false);
+  const [voiceSubject, setVoiceSubject] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<"message" | "notes" | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [conditionOpen, setConditionOpen] = useState(false);
   const [patientsOpen, setPatientsOpen] = useState(false);
@@ -37,7 +40,7 @@ export default function Workspace() {
   const [conditionQuery, setConditionQuery] = useState("");
   const [attachedName, setAttachedName] = useState<string | null>(null);
   const [names, setNames] = useState<string[]>([]);
-  const [notePoints, setNotePoints] = useState<NotePoint[]>([]);
+  const [messagePoints, setMessagePoints] = useState<MessagePoint[]>([]);
   const [draftText, setDraftText] = useState("");
   const [draftId, setDraftId] = useState<string | null>(null);
   const [approvedFor, setApprovedFor] = useState<string | null>(null);
@@ -45,22 +48,69 @@ export default function Workspace() {
   const [sentDetail, setSentDetail] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
-  const [noteError, setNoteError] = useState("");
+  const [messageError, setMessageError] = useState("");
   const [browsing, setBrowsing] = useState(true);
   const [history, setHistory] = useState<ReportHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [noteCounts, setNoteCounts] = useState<Record<string, number>>({});
+  const [notesVersion, setNotesVersion] = useState(0);
+  const [schedule, setSchedule] = useSchedule();
   const fileRef = useRef<HTMLInputElement>(null);
   const attachedFile = useRef<File | null>(null);
   const pollTimer = useRef<number | null>(null);
   const cohortRef = useRef<number | null>(null);
-  const voice = useVoiceSession(runId);
-
   const patient = presented?.patients.find((item) => item.id === selectedId) ?? presented?.patients[0] ?? null;
   const reasons = patient ? blockedReasons(draftText, patient.name, names) : [];
   const approved = Boolean(patient) && approvedFor === `${patient?.id}:${draftText}` && reasons.length === 0 && !drafting;
   const graphReady = phase === "ready";
+
+  /** Matches what the physician said to a flagged patient in the open report: a full name or a first name. */
+  const findPatient = (spoken: unknown): PanelPatient | null => {
+    const wanted = String(spoken ?? "").trim().toLowerCase();
+    if (!wanted) return null;
+    const flagged = presented?.patients ?? [];
+    return flagged.find((item) => item.name.toLowerCase() === wanted) ?? flagged.find((item) => item.name.toLowerCase().split(" ")[0] === wanted.split(" ")[0]) ?? null;
+  };
+
+  /** What the voice agent is allowed to do. It prepares work on screen; approving and sending stay with the physician. */
+  const runVoiceTool = async (name: string, args: Record<string, unknown>): Promise<VoiceToolResult> => {
+    const target = findPatient(args.patient_name);
+    if (!target) return { ok: false, detail: `No flagged patient by that name in this report. Flagged: ${(presented?.patients ?? []).map((item) => item.name).join(", ") || "none"}.` };
+    if (name === "draft_message") {
+      const instruction = typeof args.instruction === "string" ? args.instruction : "";
+      // Left out, the choice is kept as it is on screen; said either way, it sets the ticks.
+      const findings = typeof args.include_findings === "boolean" ? args.include_findings : null;
+      if (findings === false && !instruction.trim()) return { ok: false, detail: "A message without findings needs to be told what to say." };
+      const redraft = drawer === "message" && patient?.id === target.id && draftText.trim() && !sent;
+      if (redraft) {
+        // The voice model tends to say "include findings" on every redraft, so a personal message only gets them back when the physician asks.
+        const wantsFindings = findings === true && /finding|result|medical|report|evidence|research/i.test(instruction);
+        const change = findings === false ? false : wantsFindings ? true : null;
+        const ticked = change === null ? messagePoints : messagePoints.map((point) => ({ ...point, checked: change }));
+        if (change !== null) setMessagePoints(ticked);
+        const points = ticked.filter((point) => point.checked).map((point) => point.text);
+        if (!points.length && !instruction.trim()) return { ok: false, detail: "No findings are ticked and nothing was said about what to write." };
+        const done = await writeDraft(target, points, { instruction, previousText: draftText });
+        return done ? { ok: true, detail: `The message for ${target.name} was rewritten and is on screen. It has not been sent; the physician approves and sends it on screen.` } : { ok: false, detail: "The writer could not rewrite the message. The earlier text is unchanged." };
+      }
+      const done = await openMessage(target, instruction, true, findings !== false);
+      return done ? { ok: true, detail: `A draft message for ${target.name} is on screen for review. It has not been sent; the physician approves and sends it on screen.` } : { ok: false, detail: "The writer could not draft the message." };
+    }
+    if (name === "save_note") {
+      const text = typeof args.text === "string" ? args.text.trim() : "";
+      if (!text) return { ok: false, detail: "There was nothing to save." };
+      await addNote(target.id, text, runId, "voice");
+      setSelectedId(target.id);
+      setDrawer("notes");
+      setNotesVersion((current) => current + 1);
+      void loadNoteCounts();
+      return { ok: true, detail: `Saved a private note for ${target.name}. It is on screen and only the physician sees it.` };
+    }
+    return { ok: false, detail: "That action is not available by voice." };
+  };
+  const voice = useVoiceSession(runId, runVoiceTool);
 
   const loadHistory = async () => {
     try {
@@ -73,7 +123,16 @@ export default function Workspace() {
     }
   };
 
+  const loadNoteCounts = async () => {
+    try {
+      setNoteCounts(await countNotes());
+    } catch {
+      /* The count is a convenience; the notes drawer reports its own errors. */
+    }
+  };
+
   useEffect(() => {
+    void loadNoteCounts();
     void fetchHealth()
       .then((size) => {
         cohortRef.current = size;
@@ -95,7 +154,7 @@ export default function Workspace() {
         return;
       }
       if (searchOpen) setSearchOpen(false);
-      else if (noteOpen) setNoteOpen(false);
+      else if (drawer) setDrawer(null);
       else if (focus === "voice") {
         voice.stop();
         setFocus(graphReady ? "patient" : null);
@@ -103,7 +162,7 @@ export default function Workspace() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [conditionOpen, patientsOpen, searchOpen, noteOpen, focus, graphReady, voice]);
+  }, [conditionOpen, patientsOpen, searchOpen, drawer, focus, graphReady, voice]);
 
   const applyView = (view: RunView, focusPatient = true) => {
     setProgress(view.progress ?? []);
@@ -134,7 +193,7 @@ export default function Workspace() {
   const showHistory = () => {
     if (phase === "running") return;
     voice.stop();
-    setNoteOpen(false);
+    setDrawer(null);
     setSearchOpen(false);
     setConditionOpen(false);
     setPatientsOpen(false);
@@ -155,7 +214,7 @@ export default function Workspace() {
     setSearchOpen(false);
     setConditionOpen(false);
     setPatientsOpen(false);
-    setNoteOpen(false);
+    setDrawer(null);
     try {
       const view = await readRun(id);
       applyView(view, false);
@@ -173,7 +232,7 @@ export default function Workspace() {
     setSearchOpen(false);
     setConditionOpen(false);
     setPatientsOpen(false);
-    setNoteOpen(false);
+    setDrawer(null);
     setFocus(null);
     setPresented(null);
     setBrowsing(false);
@@ -201,50 +260,84 @@ export default function Workspace() {
     }
   };
 
-  const openVoice = () => {
+  const startVoice = (subject: string | null) => {
     if ((phase !== "ready" && phase !== "empty") || !runId) return;
-    setNoteOpen(false);
+    setDrawer(null);
+    setVoiceSubject(subject);
     setFocus("voice");
-    void voice.connect(patient?.name || "the panel");
+    void voice.connect(subject);
   };
 
-  const openNote = async () => {
-    if (!patient || !runId) return;
-    const texts = patient.fields.filter(Boolean);
-    const points = (texts.length ? texts : ["The findings in this run that apply to this chart"]).map((text) => ({ text, checked: true }));
-    voice.stop();
-    setFocus("patient");
-    setNotePoints(points);
+  /** From a patient card: focus the conversation on that patient. */
+  const openVoice = () => startVoice(patient?.name ?? null);
+  /** From the graph's corner button: cover the whole report. */
+  const openReportVoice = () => startVoice(null);
+
+  /** Opens the message drawer with a first draft. Voice passes its own target and keeps the conversation running. */
+  const openMessage = async (target: PanelPatient | null = patient, instruction = "", fromVoice = false, findings = true): Promise<boolean> => {
+    if (!target || !runId) return false;
+    const texts = target.fields.filter(Boolean);
+    const points = (texts.length ? texts : ["The findings in this run that apply to this chart"]).map((text) => ({ text, checked: findings }));
+    if (fromVoice) setSelectedId(target.id);
+    else {
+      voice.stop();
+      setFocus("patient");
+    }
+    setMessagePoints(points);
     setDraftText("");
     setDraftId(null);
     setApprovedFor(null);
     setSent(false);
     setSentDetail("");
-    setNoteError("");
-    setNoteOpen(true);
+    setMessageError("");
+    setDrawer("message");
+    return writeDraft(target, points.filter((point) => point.checked).map((point) => point.text), instruction.trim() ? { instruction, previousText: "" } : undefined);
+  };
+
+  /** The physician's own notes on this patient. Nothing here is drafted by a model or sent anywhere. */
+  const openNotes = () => {
+    if (!patient) return;
+    voice.stop();
+    setFocus("patient");
+    setDrawer("notes");
+  };
+
+  /** Asks the writer for a patient message. With `rewrite`, the current text stays on screen until the new one arrives. */
+  const writeDraft = async (target: PanelPatient, points: string[], rewrite?: { instruction: string; previousText: string }): Promise<boolean> => {
+    if (!runId) return false;
     setDrafting(true);
+    setMessageError("");
     try {
-      const draft = await createDraft(runId, patient.id, points.map((point) => point.text));
+      const draft = await createDraft(runId, target.id, points, rewrite);
       setDraftId(draft.draft_id);
       setDraftText(draft.edited_text || draft.model_draft?.body || "");
+      setApprovedFor(null);
+      return true;
     } catch (cause) {
-      setNoteError(cause instanceof Error && cause.message ? cause.message : "Could not draft the note");
+      setMessageError(cause instanceof Error && cause.message ? cause.message : rewrite?.previousText ? "Could not rewrite the message" : "Could not draft the message");
+      return false;
     } finally {
       setDrafting(false);
     }
   };
 
-  const sendNote = async () => {
+  const rewriteMessage = (instruction: string) => {
+    const points = messagePoints.filter((point) => point.checked).map((point) => point.text);
+    if ((!points.length && !instruction.trim()) || sent || !patient) return;
+    void writeDraft(patient, points, { instruction, previousText: draftText });
+  };
+
+  const sendMessage = async () => {
     if (!draftId || !approved) return;
     setSending(true);
-    setNoteError("");
+    setMessageError("");
     try {
       const result = await approveDraft(draftId, draftText);
       setSent(true);
-      setSentDetail(result.delivery?.recipient ? `${result.delivery.recipient} · synthetic patient, no real delivery` : "Synthetic patient, no real delivery");
+      setSentDetail(result.delivery?.recipient ? `Emailed to ${result.delivery.recipient} · synthetic patient` : "Emailed to the test inbox · synthetic patient");
     } catch (cause) {
       setApprovedFor(null);
-      setNoteError(cause instanceof Error && cause.message ? cause.message : "Send was refused");
+      setMessageError(cause instanceof Error && cause.message ? cause.message : "Send was refused");
     } finally {
       setSending(false);
     }
@@ -257,30 +350,24 @@ export default function Workspace() {
   const total = cohortSize ?? reviewCount;
 
   return (
-    <main className="flex h-screen min-w-[1280px] flex-col bg-canvas text-ink">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-surface px-6">
+    <main className="flex h-screen min-w-[1280px] flex-col bg-page text-ink">
+      <header className="flex h-16 shrink-0 items-center justify-between border-b border-cleared-border bg-page px-6">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2.5">
             <img src="/brand-mark.svg" alt="" width={40} height={25} />
             <span className="font-display text-lg font-semibold leading-[26px] tracking-[-0.09px]">SynapseMed</span>
           </div>
-          <span className="rounded-xl border border-line bg-caution-bg px-2.5 py-1 text-xs font-medium tracking-[0.06px] text-caution-fg">{cohortLabel(cohortSize)}</span>
+          {cohortSize ? <span className="rounded-xl border border-cleared-border bg-surface px-2.5 py-1 text-xs font-medium tracking-[0.06px] text-secondary">{cohortSize} patients</span> : null}
         </div>
         <div className="flex items-center gap-4">
-          <div className="whitespace-nowrap text-right">
-            <p className="text-sm font-semibold leading-5">Next scheduled run · Mon 07:00</p>
-            <p className="text-[11px] tracking-[0.055px] text-secondary">Weekdays at 07:00 · scheduled runs never send mail</p>
-          </div>
-          <button type="button" onClick={openVoice} className="flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3.5 text-sm font-semibold">
-            <span className={`h-2 w-2 rounded-full ${focus === "voice" ? "bg-violet" : "bg-ink"}`} />
-            {focus === "voice" && patient ? `Voice live · ${patient.name}` : "Voice · discuss report"}
-          </button>
-          <span className="grid h-7 min-w-8 place-items-center rounded-2xl bg-cleared-bg px-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">DO</span>
+          <ScheduleControl schedule={schedule} onSave={setSchedule} />
+          <span className="grid h-7 min-w-8 place-items-center rounded-2xl border border-cleared-border bg-surface px-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">DO</span>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col gap-3.5 py-4 pl-6 pr-4">
           <RunTracker
+            scheduleLabel={scheduleInSentence(schedule)}
             phase={phase}
             literatureDone={literatureDone}
             contrastDone={contrastDone}
@@ -290,12 +377,6 @@ export default function Workspace() {
             sourceCount={presented?.sources.length ?? 0}
             attachedName={attachedName}
             error={error}
-            onAttach={() => fileRef.current?.click()}
-            onClearAttachment={() => {
-              attachedFile.current = null;
-              setAttachedName(null);
-              if (fileRef.current) fileRef.current.value = "";
-            }}
             onStart={() => void startRun()}
           />
           <input
@@ -311,6 +392,7 @@ export default function Workspace() {
           />
           <CohortField
             phase={phase}
+            stage={literatureDone ? "contrast" : "literature"}
             patients={presented?.patients ?? []}
             quiet={presented?.quiet ?? []}
             sources={presented?.sources ?? []}
@@ -328,53 +410,49 @@ export default function Workspace() {
               setFocus("patient");
             }}
             onTalk={openVoice}
-            onDraft={() => void openNote()}
+            onTalkReport={openReportVoice}
+            voiceSubject={voiceSubject}
+            onDraft={() => void openMessage()}
+            onNotes={openNotes}
+            noteCounts={noteCounts}
             onEndVoice={() => {
               voice.stop();
               setFocus(graphReady ? "patient" : null);
             }}
             onToggleMute={voice.toggleMuted}
             onDismissCard={() => setFocus(null)}
-            onTalkGroup={(names) => {
-              if ((phase !== "ready" && phase !== "empty") || !runId) return;
-              setNoteOpen(false);
-              setFocus("voice");
-              void voice.connect(names.join(" and "));
-            }}
+            onTalkGroup={(names) => startVoice(names.join(" and "))}
           />
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-semibold text-secondary">Evidence match</span>
-            <LegendPill level="CRITICAL" />
-            <LegendPill level="HIGH" />
-            <LegendPill level="MODERATE" />
-            <span className="text-[11px] tracking-[0.055px] text-muted">No edge: not matched this run · Not an acuity score</span>
-          </div>
         </section>
         <aside className="relative flex w-[480px] shrink-0 flex-col border-l border-line bg-surface">
-          {noteOpen && patient ? (
-            <NoteDrawer
+          {drawer === "notes" && patient ? (
+            <NotesDrawer key={patient.id} patientId={patient.id} patientName={patient.name} runId={runId} version={notesVersion} onChanged={() => void loadNoteCounts()} onClose={() => setDrawer(null)} />
+          ) : drawer === "message" && patient ? (
+            <MessageDrawer
+              key={patient.id}
               patientName={patient.name}
               draft={draftText}
-              points={notePoints}
+              points={messagePoints}
               approved={approved}
               sent={sent}
               sentDetail={sentDetail}
               drafting={drafting}
               sending={sending}
               reasons={reasons}
-              error={noteError}
+              error={messageError}
               onDraft={(value) => {
                 setDraftText(value);
                 setSent(false);
                 setApprovedFor(null);
               }}
-              onTogglePoint={(index) => setNotePoints((current) => current.map((point, pointIndex) => (pointIndex === index ? { ...point, checked: !point.checked } : point)))}
+              onTogglePoint={(index) => setMessagePoints((current) => current.map((point, pointIndex) => (pointIndex === index ? { ...point, checked: !point.checked } : point)))}
               onToggleApproved={() => {
                 if (reasons.length > 0 || !patient) return;
                 setApprovedFor((current) => (current === `${patient.id}:${draftText}` ? null : `${patient.id}:${draftText}`));
               }}
-              onSend={() => void sendNote()}
-              onClose={() => setNoteOpen(false)}
+              onRewrite={rewriteMessage}
+              onSend={() => void sendMessage()}
+              onClose={() => setDrawer(null)}
             />
           ) : (
             <ReportPanel
@@ -387,6 +465,7 @@ export default function Workspace() {
               conditionQuery={conditionQuery}
               selectedId={graphReady ? selectedId : null}
               cohortSize={cohortSize}
+              scheduleLabel={scheduleInSentence(schedule)}
               report={presented?.report ?? null}
               patients={presented?.patients ?? []}
               sources={presented?.sources ?? []}
@@ -400,7 +479,7 @@ export default function Workspace() {
               onQuery={setQuery}
               onOpenSearch={() => {
                 setSearchOpen(true);
-                setNoteOpen(false);
+                setDrawer(null);
               }}
               onCloseSearch={() => {
                 setSearchOpen(false);
@@ -420,6 +499,13 @@ export default function Workspace() {
               onClearConditions={() => setConditionIds([])}
               onStart={() => void startRun()}
               onSample={() => void startRun(true)}
+              attachedName={attachedName}
+              onAttach={() => fileRef.current?.click()}
+              onClearAttachment={() => {
+                attachedFile.current = null;
+                setAttachedName(null);
+                if (fileRef.current) fileRef.current.value = "";
+              }}
               onSelectPatient={(id) => {
                 setSelectedId(id);
                 setFocus("patient");
@@ -449,7 +535,7 @@ export default function Workspace() {
               }}
             />
           )}
-          {conditionOpen && !noteOpen && (
+          {conditionOpen && !drawer && (
             <ConditionMenu ids={conditionIds} query={conditionQuery} onQuery={setConditionQuery} onToggle={(id) => setConditionIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))} onClear={() => setConditionIds([])} />
           )}
         </aside>
@@ -458,11 +544,3 @@ export default function Workspace() {
   );
 }
 
-function LegendPill({ level }: { level: "CRITICAL" | "HIGH" | "MODERATE" }) {
-  const styles = {
-    CRITICAL: "border-blocked-border bg-blocked-bg text-blocked-fg",
-    HIGH: "border-caution-border bg-caution-bg text-caution-fg",
-    MODERATE: "border-accent bg-accent-surface text-accent",
-  }[level];
-  return <span className={`rounded border px-2 py-0.5 text-xs font-medium tracking-[0.06px] ${styles}`}>{level}</span>;
-}

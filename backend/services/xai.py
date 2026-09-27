@@ -26,7 +26,7 @@ def _headers():
     load_local_env()
     key = os.getenv("XAI_API_KEY")
     if not key:
-        raise HTTPException(503, "XAI_API_KEY is not configured on the API server")
+        raise HTTPException(503, "Mishti is not set up on the server: the model service key is missing from backend/.env")
     return {"Authorization": f"Bearer {key}"}
 
 async def ingest_trial_paper(content: bytes, filename: str, content_type: str | None) -> dict:
@@ -40,7 +40,7 @@ async def ingest_trial_paper(content: bytes, filename: str, content_type: str | 
             files={"file": (filename, content, content_type or "application/pdf")},
         )
         if upload.is_error:
-            raise HTTPException(upload.status_code, f"xAI upload failed: {upload.text[:300]}")
+            raise HTTPException(upload.status_code, f"The source could not be uploaded for Mishti to read: {upload.text[:300]}")
         file_id = upload.json()["id"]
         prompt = """You are TrialLens, a clinical evidence analyst. Read the entire attached trial paper. Return concise JSON only with: title, journal, publication_date, key_findings, inclusion_criteria (array), exclusion_criteria (array), target_biomarkers (object), safety_signals (array), and abstract. Do not prescribe treatment. State uncertainty where the paper is unclear."""
         analysis = await client.post(
@@ -49,7 +49,7 @@ async def ingest_trial_paper(content: bytes, filename: str, content_type: str | 
             json={"model": "grok-4.7", "reasoning_effort": "high", "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}, {"type": "input_file", "file_id": file_id}]}]},
         )
         if analysis.is_error:
-            raise HTTPException(analysis.status_code, f"Grok analysis failed: {analysis.text[:300]}")
+            raise HTTPException(analysis.status_code, f"Mishti could not read the source: {analysis.text[:300]}")
     result = analysis.json()
     output_text = result.get("output_text") or next((part.get("text", "") for item in reversed(result.get("output", [])) for part in item.get("content", []) if part.get("type") == "output_text"), "")
     return {"file_id": file_id, "response_id": result.get("id"), "analysis": output_text, "model": "grok-4.7"}
