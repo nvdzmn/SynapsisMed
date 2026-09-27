@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -38,15 +39,25 @@ async def scheduled_runs():
             await launch_run(None, None, scheduled=True); last_day = stamp.date()
         await asyncio.sleep(3600)
 
+def environment_flag(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+def cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
+    return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+
+def cors_origin_regex() -> str | None:
+    return os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.initialize(); seed_cohort()
-    task = asyncio.create_task(scheduled_runs())
+    task = asyncio.create_task(scheduled_runs()) if environment_flag("SCHEDULED_RUNS_ENABLED") else None
     yield
-    task.cancel()
+    if task: task.cancel()
 
 app = FastAPI(title="SynapseMed TrialLens API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3001"], allow_credentials=True, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type"])
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins(), allow_origin_regex=cors_origin_regex(), allow_credentials=True, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type"])
 
 def extract_upload(file: UploadFile, content: bytes) -> dict:
     suffix = Path(file.filename or "").suffix.lower()
