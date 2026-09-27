@@ -4,3 +4,6 @@ node_modules
 __pycache__
 .env
 .DS_Store
+backend/data/runs/
+backend/data/drafts/
+backend/data/synthea_csv/
