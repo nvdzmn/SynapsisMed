@@ -23,6 +23,7 @@ export type SourceNode = {
   y: number;
   citation: string;
   pmid: string;
+  url?: string;
 };
 
 export type QuietDot = { x: number; y: number; r: number };

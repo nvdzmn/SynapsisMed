@@ -38,9 +38,12 @@ export type RunView = {
       sources?: SourceRecord[];
     };
     footer?: string;
+    placeholder?: boolean;
     model_summary?: Record<string, unknown>;
   };
   source_pack?: SourceRecord[];
+  placeholder?: boolean;
+  placeholder_reason?: string | null;
 };
 
 export type ReportView = {
@@ -50,6 +53,7 @@ export type ReportView = {
   supports: string[];
   limits: string[];
   footer: string;
+  placeholder?: boolean;
 };
 
 export type GraphEdge = { from: string; to: string; color: string };
@@ -90,12 +94,37 @@ export async function fetchHealth(): Promise<number | null> {
   return typeof body.cohort_size === "number" ? body.cohort_size : null;
 }
 
-export async function startLiteratureRun(question: string, file?: File | null): Promise<RunView> {
+export async function startLiteratureRun(question: string, file?: File | null, sample = false): Promise<RunView> {
   const form = new FormData();
   if (question.trim()) form.append("question", question.trim());
   if (file) form.append("file", file);
+  if (sample) form.append("sample", "true");
   const response = await fetch(`${API_URL}/api/runs`, { method: "POST", body: form });
   if (!response.ok) throw new Error(await errorMessage(response, "Could not start a literature run"));
+  return (await response.json()) as RunView;
+}
+
+export type ReportHistoryItem = {
+  run_id: string;
+  created_at?: string;
+  completed_at?: string | null;
+  title: string;
+  question: string;
+  review_count: number;
+  source_count: number;
+  placeholder?: boolean;
+};
+
+export async function listRuns(): Promise<ReportHistoryItem[]> {
+  const response = await fetch(`${API_URL}/api/runs`);
+  if (!response.ok) throw new Error(await errorMessage(response, "Could not load past reports"));
+  const body = (await response.json()) as ReportHistoryItem[];
+  return Array.isArray(body) ? body : [];
+}
+
+export async function readLatestRun(): Promise<RunView> {
+  const response = await fetch(`${API_URL}/api/runs/latest`);
+  if (!response.ok) throw new Error(await errorMessage(response, "No completed report is saved yet"));
   return (await response.json()) as RunView;
 }
 
@@ -199,7 +228,8 @@ export function presentRun(view: RunView, cohortSize: number): PresentedRun {
     const spot = place(index, Math.max(pack.length, 1), 70, 46, 0.5);
     const pmid = source.pmid || "";
     const citation = [source.title, source.journal, source.publication_date].filter(Boolean).join(" · ");
-    return { id: source.source_id || `s${index + 1}`, label: `S${index + 1}`, x: spot.x, y: spot.y, citation: citation || "Source", pmid };
+    const url = source.pubmed_url || (pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : "");
+    return { id: source.source_id || `s${index + 1}`, label: `S${index + 1}`, x: spot.x, y: spot.y, citation: citation || "Source", pmid, url };
   });
   const edges: GraphEdge[] = patients.flatMap((patient, index) => {
     const source = sources[index % Math.max(sources.length, 1)];
@@ -226,6 +256,7 @@ export function presentRun(view: RunView, cohortSize: number): PresentedRun {
       supports: asLines(summary.supports ?? summary.literature ?? sections.literature, "Findings are limited to the sources attached to this run."),
       limits: asLines(summary.does_not_support ?? summary.limitations ?? sections.limitations, "Evidence matching is a review prompt, not a treatment recommendation."),
       footer: view.report?.footer || "Synthetic records. Decision support, not a treatment recommendation.",
+      placeholder: Boolean(view.placeholder || view.report?.placeholder),
     },
   };
 }

@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type Phase } from "../../lib/workspace-data";
-import { approveDraft, cohortLabel, createDraft, fetchHealth, formatWhen, presentRun, readRun, startLiteratureRun, type PresentedRun, type RunView } from "../../lib/triallens";
+import { approveDraft, cohortLabel, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
 import CohortField from "./CohortField";
 import NoteDrawer from "./NoteDrawer";
 import ReportPanel, { ConditionMenu } from "./ReportPanel";
+import RunTracker from "./RunTracker";
 import { useVoiceSession } from "./useVoiceSession";
 
 type NotePoint = { text: string; checked: boolean };
@@ -45,6 +46,11 @@ export default function Workspace() {
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [noteError, setNoteError] = useState("");
+  const [browsing, setBrowsing] = useState(true);
+  const [history, setHistory] = useState<ReportHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachedFile = useRef<File | null>(null);
   const pollTimer = useRef<number | null>(null);
@@ -56,6 +62,17 @@ export default function Workspace() {
   const approved = Boolean(patient) && approvedFor === `${patient?.id}:${draftText}` && reasons.length === 0 && !drafting;
   const graphReady = phase === "ready";
 
+  const loadHistory = async () => {
+    try {
+      setHistory(await listRuns());
+      setHistoryError("");
+    } catch (cause) {
+      setHistoryError(cause instanceof Error && cause.message ? cause.message : "Could not load past reports");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void fetchHealth()
       .then((size) => {
@@ -63,6 +80,7 @@ export default function Workspace() {
         setCohortSize(size);
       })
       .catch(() => setCohortSize(null));
+    void loadHistory();
     return () => {
       if (pollTimer.current) window.clearTimeout(pollTimer.current);
     };
@@ -87,7 +105,7 @@ export default function Workspace() {
     return () => window.removeEventListener("keydown", onKey);
   }, [conditionOpen, patientsOpen, searchOpen, noteOpen, focus, graphReady, voice]);
 
-  const applyView = (view: RunView) => {
+  const applyView = (view: RunView, focusPatient = true) => {
     setProgress(view.progress ?? []);
     setNames((view.overlay?.patients ?? []).map((item) => item.display_name));
     if (view.status === "failed") {
@@ -110,10 +128,46 @@ export default function Workspace() {
     setError("");
     setPhase(next.patients.length ? "ready" : "empty");
     setSelectedId(next.patients[0]?.id ?? null);
-    setFocus(next.patients.length ? "patient" : null);
+    setFocus(focusPatient && next.patients.length ? "patient" : null);
   };
 
-  const startRun = async () => {
+  const showHistory = () => {
+    if (phase === "running") return;
+    voice.stop();
+    setNoteOpen(false);
+    setSearchOpen(false);
+    setConditionOpen(false);
+    setPatientsOpen(false);
+    setFocus(null);
+    setPresented(null);
+    setSelectedId(null);
+    setRunId(null);
+    setProgress([]);
+    setCompletedAt(null);
+    setError("");
+    setPhase("idle");
+    setBrowsing(true);
+    void loadHistory();
+  };
+
+  const openReport = async (id: string) => {
+    setOpeningId(id);
+    setSearchOpen(false);
+    setConditionOpen(false);
+    setPatientsOpen(false);
+    setNoteOpen(false);
+    try {
+      const view = await readRun(id);
+      applyView(view, false);
+      setBrowsing(false);
+    } catch (cause) {
+      setHistoryError(cause instanceof Error && cause.message ? cause.message : "Could not open that report");
+    } finally {
+      setOpeningId(null);
+    }
+  };
+
+  const startRun = async (sample = false) => {
     if (pollTimer.current) window.clearTimeout(pollTimer.current);
     voice.stop();
     setSearchOpen(false);
@@ -122,18 +176,22 @@ export default function Workspace() {
     setNoteOpen(false);
     setFocus(null);
     setPresented(null);
+    setBrowsing(false);
     setPhase("running");
     setError("");
     setProgress(["phenotype_complete"]);
     const focusLabels = CONDITIONS.filter((item) => conditionIds.includes(item.id)).map((item) => item.label);
     const asked = [query.trim(), focusLabels.length ? `Focus on ${focusLabels.join(", ")}.` : ""].filter(Boolean).join(" ");
     try {
-      const started = await startLiteratureRun(asked, attachedFile.current);
+      const started = await startLiteratureRun(asked, sample ? null : attachedFile.current, sample);
       setRunId(started.run_id);
       const tick = async () => {
         const view = await readRun(started.run_id);
         applyView(view);
-        if (view.status === "complete" || view.status === "failed") return;
+        if (view.status === "complete" || view.status === "failed") {
+          void loadHistory();
+          return;
+        }
         pollTimer.current = window.setTimeout(() => void tick(), 1200);
       };
       await tick();
@@ -197,8 +255,6 @@ export default function Workspace() {
   const finishedAt = formatWhen(completedAt);
   const reviewCount = presented?.reviewCount ?? 0;
   const total = cohortSize ?? reviewCount;
-  const reviewTitle = phase === "ready" || phase === "empty" ? `Run complete${finishedAt ? ` · ${finishedAt}` : ""}` : phase === "running" ? (literatureDone ? "Checking the panel" : "Searching the literature") : phase === "failed" ? "Run failed" : "No run yet";
-  const reviewDetail = phase === "ready" || phase === "empty" ? `${reviewCount} of ${total} patients to review` : phase === "running" ? (literatureDone ? "Contrasting charts with the sources" : "PubMed retrieval is in progress") : phase === "failed" ? "Stopped before the report was ready" : "Next scheduled run · weekdays 07:00";
 
   return (
     <main className="flex h-screen min-w-[1280px] flex-col bg-canvas text-ink">
@@ -224,40 +280,42 @@ export default function Workspace() {
       </header>
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col gap-3.5 py-4 pl-6 pr-4">
-          <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
-            <button type="button" onClick={() => fileRef.current?.click()} className="text-left">
-              <span className="block text-sm font-semibold text-accent">{attachedName || "+ Attach a source"}</span>
-              <span className="block text-[11px] tracking-[0.055px] text-muted">Optional · one PDF, DOCX, or TXT</span>
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf,.docx,.txt"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                attachedFile.current = file ?? null;
-                setAttachedName(file?.name ?? null);
-              }}
-            />
-            <div className="flex items-center gap-1.5">
-              <Step label="Literature" state={phase === "idle" ? "pending" : literatureDone ? "done" : phase === "failed" ? "error" : "active"} />
-              <Connector />
-              <Step label="Contrast" state={phase === "idle" || (phase === "running" && !literatureDone) ? "pending" : contrastDone ? "done" : phase === "failed" ? "error" : "active"} />
-              <Connector />
-              <Step label="Report" state={phase === "ready" || phase === "empty" ? "done" : "pending"} />
-            </div>
-            <div className="shrink-0 whitespace-nowrap text-right">
-              <p className="text-sm font-semibold leading-5">{reviewTitle}</p>
-              <p className="text-[11px] tracking-[0.055px] text-secondary">{reviewDetail}</p>
-            </div>
-          </div>
+          <RunTracker
+            phase={phase}
+            literatureDone={literatureDone}
+            contrastDone={contrastDone}
+            finishedAt={finishedAt}
+            reviewCount={reviewCount}
+            total={total}
+            sourceCount={presented?.sources.length ?? 0}
+            attachedName={attachedName}
+            error={error}
+            onAttach={() => fileRef.current?.click()}
+            onClearAttachment={() => {
+              attachedFile.current = null;
+              setAttachedName(null);
+              if (fileRef.current) fileRef.current.value = "";
+            }}
+            onStart={() => void startRun()}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              attachedFile.current = file ?? null;
+              setAttachedName(file?.name ?? null);
+            }}
+          />
           <CohortField
             phase={phase}
             patients={presented?.patients ?? []}
             quiet={presented?.quiet ?? []}
             sources={presented?.sources ?? []}
             edges={presented?.edges ?? []}
+            report={presented?.report ?? null}
             selectedId={graphReady ? selectedId : null}
             showCard={graphReady && focus === "patient" && Boolean(patient)}
             showVoice={focus === "voice"}
@@ -276,6 +334,13 @@ export default function Workspace() {
               setFocus(graphReady ? "patient" : null);
             }}
             onToggleMute={voice.toggleMuted}
+            onDismissCard={() => setFocus(null)}
+            onTalkGroup={(names) => {
+              if ((phase !== "ready" && phase !== "empty") || !runId) return;
+              setNoteOpen(false);
+              setFocus("voice");
+              void voice.connect(names.join(" and "));
+            }}
           />
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-semibold text-secondary">Evidence match</span>
@@ -327,6 +392,11 @@ export default function Workspace() {
               sources={presented?.sources ?? []}
               error={error}
               reviewCount={reviewCount}
+              browsing={browsing}
+              history={history}
+              historyLoading={historyLoading}
+              historyError={historyError}
+              openingId={openingId}
               onQuery={setQuery}
               onOpenSearch={() => {
                 setSearchOpen(true);
@@ -349,19 +419,33 @@ export default function Workspace() {
               onToggleCondition={(id) => setConditionIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
               onClearConditions={() => setConditionIds([])}
               onStart={() => void startRun()}
+              onSample={() => void startRun(true)}
               onSelectPatient={(id) => {
                 setSelectedId(id);
                 setFocus("patient");
               }}
               onRetry={() => void startRun()}
+              onShowHistory={showHistory}
+              onOpenReport={(id) => void openReport(id)}
               onOpenLast={() => {
-                if (!lastPresented || !lastRunId) return;
-                setPresented(lastPresented);
-                setRunId(lastRunId);
-                setPhase(lastPresented.patients.length ? "ready" : "empty");
-                setSelectedId(lastPresented.patients[0]?.id ?? null);
-                setFocus(lastPresented.patients.length ? "patient" : null);
-                setError("");
+                void (async () => {
+                  const cached = lastPresented && lastRunId ? { presented: lastPresented, runId: lastRunId } : null;
+                  if (cached) {
+                    setPresented(cached.presented);
+                    setRunId(cached.runId);
+                    setPhase(cached.presented.patients.length ? "ready" : "empty");
+                    setSelectedId(cached.presented.patients[0]?.id ?? null);
+                    setFocus(cached.presented.patients.length ? "patient" : null);
+                    setError("");
+                    return;
+                  }
+                  try {
+                    const view = await readLatestRun();
+                    applyView(view);
+                  } catch (cause) {
+                    setError(cause instanceof Error && cause.message ? cause.message : "No completed report is saved yet");
+                  }
+                })();
               }}
             />
           )}
@@ -371,26 +455,6 @@ export default function Workspace() {
         </aside>
       </div>
     </main>
-  );
-}
-
-function Connector() {
-  return <span className="h-[1.5px] w-4 bg-line-strong" />;
-}
-
-function Step({ label, state }: { label: string; state: "done" | "active" | "pending" | "error" }) {
-  const styles = {
-    done: "border-cleared-border bg-cleared-bg text-cleared-fg",
-    active: "border-violet bg-cleared-bg text-cleared-fg",
-    pending: "border-line-strong bg-surface text-muted",
-    error: "border-blocked-border bg-blocked-bg text-blocked-fg",
-  }[state];
-  const mark = state === "done" ? "✓" : state === "error" ? "×" : state === "active" ? "●" : "○";
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[5px] text-xs font-medium tracking-[0.06px] ${styles}`}>
-      <span>{mark}</span>
-      {label}
-    </span>
   );
 }
 

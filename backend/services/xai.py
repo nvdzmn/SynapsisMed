@@ -1,11 +1,29 @@
 """Server-side xAI integration. Never expose XAI_API_KEY to the browser."""
 import os
+from pathlib import Path
 import httpx
 from fastapi import HTTPException
 
 XAI_URL = "https://api.x.ai/v1"
 
+def load_local_env() -> None:
+    """Read backend/.env when the server process was started without it."""
+    path = Path(__file__).resolve().parents[1] / ".env"
+    if not path.exists():
+        return
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+load_local_env()
+
 def _headers():
+    load_local_env()
     key = os.getenv("XAI_API_KEY")
     if not key:
         raise HTTPException(503, "XAI_API_KEY is not configured on the API server")

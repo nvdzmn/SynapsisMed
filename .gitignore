@@ -10,3 +10,4 @@ backend/data/synthea_csv/
 backend/data/triallens.db
 backend/data/triallens.db-shm
 backend/data/triallens.db-wal
+.gstack/
