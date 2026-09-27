@@ -1024,7 +1024,7 @@ function VoicePanel({ patientName, muted, you, reply, error, onToggleMute, onEnd
     <section className="flex flex-col gap-3 rounded-xl border-[1.5px] border-violet bg-surface p-4 shadow-[0_18px_48px_rgba(111,75,209,0.18)]">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold leading-5 text-ink">Grok Voice</h2>
+          <h2 className="text-sm font-semibold leading-5 text-ink">Mishti</h2>
           <p className="text-[11px] tracking-[0.055px] text-secondary">Discussing {patientName} · briefed on this report</p>
         </div>
         <span className="pt-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">{muted ? "Muted" : "Listening"}</span>
@@ -1048,7 +1048,7 @@ function VoicePanel({ patientName, muted, you, reply, error, onToggleMute, onEnd
         <p className="text-sm leading-5 text-ink">{you || "Your question will appear here."}</p>
       </div>
       <div>
-        <p className="text-[11px] tracking-[0.055px] text-muted">Grok</p>
+        <p className="text-[11px] tracking-[0.055px] text-muted">Mishti</p>
         <p className="text-sm leading-5 text-ink">{error || reply}</p>
       </div>
       <div className="flex gap-2">
@@ -1059,7 +1059,7 @@ function VoicePanel({ patientName, muted, you, reply, error, onToggleMute, onEnd
           End voice
         </button>
       </div>
-      <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">Voice discusses the report, and can draft a message or save a note. It can&apos;t search or send.</p>
+      <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">Mishti discusses the report, and can draft a message or save a note. She can&apos;t search or send.</p>
     </section>
   );
 }

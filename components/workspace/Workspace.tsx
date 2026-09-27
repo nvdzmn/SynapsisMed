@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type PanelPatient, type Phase } from "../../lib/workspace-data";
-import { addNote, approveDraft, cohortLabel, countNotes, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
+import { addNote, approveDraft, countNotes, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
 import CohortField from "./CohortField";
 import MessageDrawer from "./MessageDrawer";
 import NotesDrawer from "./NotesDrawer";
@@ -350,18 +350,18 @@ export default function Workspace() {
   const total = cohortSize ?? reviewCount;
 
   return (
-    <main className="flex h-screen min-w-[1280px] flex-col bg-canvas text-ink">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-surface px-6">
+    <main className="flex h-screen min-w-[1280px] flex-col bg-page text-ink">
+      <header className="flex h-16 shrink-0 items-center justify-between border-b border-cleared-border bg-page px-6">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2.5">
             <img src="/brand-mark.svg" alt="" width={40} height={25} />
             <span className="font-display text-lg font-semibold leading-[26px] tracking-[-0.09px]">SynapseMed</span>
           </div>
-          <span className="rounded-xl border border-line bg-caution-bg px-2.5 py-1 text-xs font-medium tracking-[0.06px] text-caution-fg">{cohortLabel(cohortSize)}</span>
+          {cohortSize ? <span className="rounded-xl border border-cleared-border bg-surface px-2.5 py-1 text-xs font-medium tracking-[0.06px] text-secondary">{cohortSize} patients</span> : null}
         </div>
         <div className="flex items-center gap-4">
           <ScheduleControl schedule={schedule} onSave={setSchedule} />
-          <span className="grid h-7 min-w-8 place-items-center rounded-2xl bg-cleared-bg px-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">DO</span>
+          <span className="grid h-7 min-w-8 place-items-center rounded-2xl border border-cleared-border bg-surface px-2 text-xs font-medium tracking-[0.06px] text-cleared-fg">DO</span>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">

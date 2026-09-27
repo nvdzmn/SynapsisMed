@@ -58,7 +58,7 @@ export function useVoiceSession(runId: string | null, onTool?: VoiceToolHandler)
   const [muted, setMuted] = useState(false);
   const [listening, setListening] = useState(false);
   const [you, setYou] = useState("");
-  const [reply, setReply] = useState("Connecting to Grok Voice…");
+  const [reply, setReply] = useState("Connecting to Mishti…");
   const [error, setError] = useState("");
   const mutedRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -118,7 +118,7 @@ export function useVoiceSession(runId: string | null, onTool?: VoiceToolHandler)
     void context.resume();
     try {
       const session = await openVoiceSession(runId);
-      const instructions = `You are SynapseMed, a spoken clinical evidence assistant. Discuss only this physician report. Do not search, prescribe, or tell anyone to start or stop a medicine. When the physician asks, you can draft a patient message with draft_message and save a private note with save_note; call the tool first, and only once it has answered say in a few words what happened. You cannot approve or send a message, and you must say so if asked: only the physician can, on screen. ${subject ? `Patient in focus: ${subject}.` : "Cover the whole panel report: the question it asked, what the literature supports and does not support, and each flagged patient in turn. Do not single out one patient unless asked."} ${session.brief} Keep answers concise.`;
+      const instructions = `You are Mishti, the spoken clinical evidence assistant in SynapseMed. If asked who or what you are, you are Mishti, SynapseMed's AI assistant; do not name the model or the company behind you. Discuss only this physician report. Do not search, prescribe, or tell anyone to start or stop a medicine. When the physician asks, you can draft a patient message with draft_message and save a private note with save_note; call the tool first, and only once it has answered say in a few words what happened. You cannot approve or send a message, and you must say so if asked: only the physician can, on screen. ${subject ? `Patient in focus: ${subject}.` : "Cover the whole panel report: the question it asked, what the literature supports and does not support, and each flagged patient in turn. Do not single out one patient unless asked."} ${session.brief} Keep answers concise.`;
       const ws = new WebSocket("wss://api.x.ai/v1/realtime?model=grok-voice-latest", [`xai-client-secret.${session.secret}`]);
       wsRef.current = ws;
       ws.onopen = async () => {
@@ -152,7 +152,7 @@ export function useVoiceSession(runId: string | null, onTool?: VoiceToolHandler)
         source.connect(processor);
         processor.connect(context.destination);
         setListening(true);
-        setReply("Listening. Voice discusses this report, and can draft a message or save a note.");
+        setReply("Listening. Mishti discusses this report, and can draft a message or save a note.");
       };
       ws.onmessage = async (event) => {
         const data = JSON.parse(String(event.data)) as VoiceEvent;
@@ -175,7 +175,7 @@ export function useVoiceSession(runId: string | null, onTool?: VoiceToolHandler)
           setReply((value) => (value.startsWith("Listening") ? data.delta || "" : `${value}${data.delta || ""}`));
         }
       };
-      ws.onerror = () => setError("Grok Voice could not connect. Check XAI_API_KEY and microphone permission.");
+      ws.onerror = () => setError("Mishti could not connect. Check the voice service key on the server and microphone permission.");
       ws.onclose = () => setListening(false);
     } catch (cause) {
       setError(cause instanceof Error && cause.message ? cause.message : "Unable to start voice");

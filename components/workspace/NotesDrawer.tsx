@@ -107,7 +107,7 @@ export default function NotesDrawer({ patientId, patientName, runId, version = 0
           ×
         </button>
       </header>
-      <p className="rounded-md border border-cleared-border bg-cleared-bg px-2.5 py-2 text-[11px] leading-4 tracking-[0.055px] text-cleared-fg">Your own notes, never sent to the patient. The starting bullets are written from this report; what you save is not read by a model.</p>
+      <p className="rounded-md border border-cleared-border bg-cleared-bg px-2.5 py-2 text-[11px] leading-4 tracking-[0.055px] text-cleared-fg">Your own notes, never sent to the patient. Mishti writes the starting bullets from this report and never reads what you save.</p>
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="text-xs font-medium tracking-[0.06px] text-accent">NEW NOTE</h3>
@@ -136,7 +136,7 @@ export default function NotesDrawer({ patientId, patientName, runId, version = 0
           className={`h-[168px] w-full resize-none rounded-xl border bg-surface p-3.5 text-sm leading-6 text-ink outline-none placeholder:text-muted focus:border-violet ${suggesting ? "animate-pulse border-violet" : "border-line"}`}
         />
         {suggestedFrom && text.trim() && (
-          <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">{suggestedFrom === "model" ? "Suggested from this report. Edit it before you save." : "Copied from this report because the writer did not respond. Edit it before you save."}</p>
+          <p className="text-[11px] leading-4 tracking-[0.055px] text-muted">{suggestedFrom === "model" ? "Suggested by Mishti from this report. Edit it before you save." : "Copied from this report because Mishti did not respond. Edit it before you save."}</p>
         )}
         <button type="button" disabled={!text.trim() || saving} onClick={() => void save()} className={`${button.primary} w-full`}>
           {saving ? "Saving…" : "Save note"}

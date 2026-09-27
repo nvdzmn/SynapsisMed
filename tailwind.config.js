@@ -5,6 +5,7 @@ module.exports = {
     extend: {
       colors: {
         canvas: "var(--bg-canvas)",
+        page: "var(--bg-page)",
         surface: "var(--bg-surface)",
         ink: "var(--text-primary)",
         secondary: "var(--text-secondary)",

@@ -291,7 +291,6 @@ function IdleReport({ cohortSize, scheduleLabel }: { cohortSize: number | null; 
         <p>Start a run to check recent literature against {count}. The report will appear here, one section per matched patient.</p>
         <p className="mt-4">{scheduleLabel ? `Or wait for the scheduled run ${scheduleLabel}. Scheduled runs never send mail.` : "Scheduled runs are off, so a report is written only when you start a run."}</p>
       </div>
-      <Caution />
     </>
   );
 }
@@ -310,7 +309,6 @@ function RunningReport() {
         ))}
       </div>
       <p className="text-[11px] tracking-[0.055px] text-muted">The report appears when all three steps finish.</p>
-      <Caution />
     </>
   );
 }
@@ -337,7 +335,6 @@ function FailedReport({ error, onRetry, onSample, onOpenLast }: { error: string;
       <button type="button" onClick={onSample} className={button.secondary}>
         Sample report
       </button>
-      <Caution />
     </>
   );
 }
@@ -351,8 +348,7 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
         <h2 className="font-display text-xl font-semibold leading-7 tracking-[-0.1px] text-ink">{report?.title || "Panel report"}</h2>
       </header>
       {sources.length > 0 ? <SourcesDropdown sources={sources} /> : null}
-      {report?.placeholder && <Caution text="Sample report. The sources are fixed landmark trials, not a live PubMed search. The write-up is from Grok." />}
-      <Caution text={report?.placeholder ? "Synthetic records. Decision support, not a treatment recommendation." : report?.footer} />
+      <RunNotes report={report} />
       <Section index="1" title="THE QUESTION THIS RUN ASKED">
         <p className="text-base leading-6 text-ink">{report?.question}</p>
       </Section>
@@ -429,8 +425,21 @@ function Section({ index, title, children }: { index: string; title: string; chi
   );
 }
 
-function Caution({ text = "Synthetic records. Decision support, not a treatment recommendation." }: { text?: string }) {
-  return <p className="rounded-md border border-caution-border bg-caution-bg px-2.5 py-2 text-[11px] leading-4 tracking-[0.055px] text-caution-fg">{text}</p>;
+/**
+ * What the physician needs to know about how this report was made: that it is a sample, or that the
+ * model did not do part of the work. The standing synthetic-data disclaimer is not repeated here.
+ */
+function RunNotes({ report }: { report: ReportView | null }) {
+  const problems = (report?.footer ?? "").split(/(?<=\.)\s+/).filter((line) => /rules only|did not respond/i.test(line));
+  const notes = [...(report?.placeholder ? ["Sample report: fixed landmark trials, not a live PubMed search."] : []), ...problems];
+  if (notes.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-xs leading-4 text-secondary">
+      {notes.map((note) => (
+        <li key={note}>{note}</li>
+      ))}
+    </ul>
+  );
 }
 
 export function ConditionMenu({

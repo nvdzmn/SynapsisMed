@@ -65,7 +65,7 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState("");
-  const [response, setResponse] = useState("Connect to start an encrypted Grok Voice triage session.");
+  const [response, setResponse] = useState("Connect to start an encrypted voice session with Mishti.");
   const wsRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
@@ -117,12 +117,12 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
     try {
       setError("");
       const activeRunId = await ensureRun();
-      setResponse("Requesting a Grok Voice session for this report.");
+      setResponse("Requesting a voice session with Mishti for this report.");
       const secretResponse = await fetch(`${apiUrl}/api/runs/${activeRunId}/voice/session`, { method: "POST" });
       const secretData = await readJson(secretResponse);
-      if (!secretResponse.ok) throw new Error(secretData.detail || "Could not create xAI voice session");
+      if (!secretResponse.ok) throw new Error(secretData.detail || "Could not create a voice session");
       const secret = clientSecret(secretData.voice_secret);
-      if (!secret) throw new Error("xAI did not return a client secret");
+      if (!secret) throw new Error("The voice service did not return a session secret");
       const spokenInstructions = `${instructions} ${reportBrief(secretData.context?.report)}`.trim();
       const ws = new WebSocket("wss://api.x.ai/v1/realtime?model=grok-voice-latest", [`xai-client-secret.${secret}`]);
       wsRef.current = ws;
@@ -163,18 +163,18 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
         source.connect(processor);
         processor.connect(context.destination);
         setConnected(true);
-        setResponse("Listening through Grok Voice. Speak naturally; server VAD detects your turn.");
+        setResponse("Mishti is listening. Speak naturally; she detects when you have finished.");
       };
       ws.onmessage = async (event) => {
         const data = JSON.parse(String(event.data)) as VoiceEvent;
         if (data.type?.includes("transcript") && data.transcript) setTranscript(data.transcript);
         if (data.type === "response.output_audio.delta" && data.delta) void playAudio(data.delta);
         if (data.type?.includes("response.output_text") && data.delta) {
-          setResponse((value) => (value === "Listening through Grok Voice. Speak naturally; server VAD detects your turn." ? data.delta ?? "" : value + (data.delta ?? "")));
+          setResponse((value) => (value === "Mishti is listening. Speak naturally; she detects when you have finished." ? data.delta ?? "" : value + (data.delta ?? "")));
         }
-        if (data.type === "response.done") setResponse((value) => value || "Grok Voice completed its response.");
+        if (data.type === "response.done") setResponse((value) => value || "Mishti finished her response.");
       };
-      ws.onerror = () => setError("Grok Voice connection failed. Confirm XAI_API_KEY and browser microphone permission.");
+      ws.onerror = () => setError("Mishti could not connect. Check the voice service key on the server and microphone permission.");
       ws.onclose = () => setConnected(false);
     } catch (cause) {
       setError(errorMessage(cause, "Unable to start voice session"));
@@ -190,9 +190,9 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
             <div>
               <p className="flex items-center gap-2 text-sm font-semibold text-sky-300">
                 <Sparkles className="h-4 w-4" />
-                Grok Voice clinical triage
+                Mishti · clinical triage
               </p>
-              <p className="mt-1 text-[11px] text-slate-500">Live speech-to-speech · scoped xAI client secret · clinician verification required</p>
+              <p className="mt-1 text-[11px] text-slate-500">Live speech-to-speech · scoped session secret · clinician verification required</p>
             </div>
             <button
               onClick={() => {
@@ -230,7 +230,7 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
             <div className="rounded-xl border border-sky-900/70 bg-sky-950/30 p-3">
               <p className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-sky-400">
                 <Volume2 className="h-3 w-3" />
-                Grok Voice response
+                Mishti
               </p>
               <p className="text-sm leading-6 text-sky-50">{response}</p>
             </div>
@@ -243,7 +243,7 @@ export default function VoiceTriageModal({ patient, study, runId, onRunReady, on
               className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${connected ? "bg-rose-500 text-white" : "bg-sky-400 text-slate-950 hover:bg-sky-300"} disabled:cursor-not-allowed disabled:opacity-40`}
             >
               {connected ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              {connected ? "End live session" : "Start Grok Voice"}
+              {connected ? "End live session" : "Talk to Mishti"}
             </button>
             <span className="flex items-center gap-1.5 text-[10px] text-slate-500">
               <Radio className={`h-3 w-3 ${connected ? "animate-pulse text-emerald-400" : ""}`} />

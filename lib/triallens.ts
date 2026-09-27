@@ -14,8 +14,8 @@ export type OverlayPatient = {
 };
 
 function recordMeta(assessedBy: OverlayPatient["assessed_by"]): string {
-  if (assessedBy === "rules_floor") return "Synthetic record · kept by rules, model review disagreed";
-  if (assessedBy === "rules_fallback" || assessedBy === "rules_only") return "Synthetic record · matched by rules, no model review";
+  if (assessedBy === "rules_floor") return "Synthetic record · kept by rules, Mishti disagreed";
+  if (assessedBy === "rules_fallback" || assessedBy === "rules_only") return "Synthetic record · matched by rules, not reviewed by Mishti";
   return "Synthetic record";
 }
 
@@ -285,7 +285,7 @@ export function cohortLabel(size: number | null): string {
   return size ? `Synthetic panel · ${size} patients` : "Synthetic panel";
 }
 
-/** A note the physician keeps for themselves. It is never sent to the patient or to a model. */
+/** A note the physician keeps for themselves. It is never sent to the patient or read by Mishti. */
 export type PatientNote = { note_id: string; patient_id: string; run_id?: string | null; created_at: string; text: string; source?: "typed" | "voice" };
 
 export async function listNotes(patientId: string): Promise<PatientNote[]> {

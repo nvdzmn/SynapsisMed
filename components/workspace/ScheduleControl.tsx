@@ -120,7 +120,7 @@ export default function ScheduleControl({ schedule, onSave }: { schedule: Schedu
           setDraft(schedule);
           setOpen((current) => !current);
         }}
-        className={`group flex items-center gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-right transition-colors hover:bg-canvas ${open ? "bg-canvas" : ""}`}
+        className={`group flex items-center gap-2.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-right transition-colors hover:bg-surface ${open ? "bg-surface" : ""}`}
       >
         <span>
           <span className="block text-sm font-semibold leading-5">{headline}</span>
@@ -131,7 +131,7 @@ export default function ScheduleControl({ schedule, onSave }: { schedule: Schedu
         </span>
       </button>
       {open && (
-        <div role="dialog" aria-label="Scheduled run" className="absolute right-0 top-[calc(100%+8px)] z-30 w-[336px] rounded-xl border border-line bg-surface p-4 text-left shadow-[0_12px_40px_rgba(18,25,51,0.12)]">
+        <div role="dialog" aria-label="Scheduled run" className="absolute right-0 top-[calc(100%+8px)] z-30 w-[336px] rounded-xl border border-line bg-surface p-4 text-left text-ink shadow-[0_12px_40px_rgba(18,25,51,0.12)]">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold leading-5 text-ink">Scheduled run</h2>

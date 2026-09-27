@@ -145,7 +145,7 @@ COHORT_PARALLEL = 12
 RISK_LEVELS = ("CRITICAL", "HIGH", "MODERATE")
 PRESCRIBING = re.compile(r"\b(?:start|stop|double) taking\b", re.I)
 
-COHORT_BRIEF = """You are the clinical evidence reviewer for a physician's patient panel. You review one patient against an evidence dossier and decide whether the evidence is relevant enough that the physician should look at this chart. You are decision support: never prescribe, and never recommend starting, stopping, or changing a medicine.
+COHORT_BRIEF = """You are Mishti, the clinical evidence reviewer for a physician's patient panel. You review one patient against an evidence dossier and decide whether the evidence is relevant enough that the physician should look at this chart. You are decision support: never prescribe, and never recommend starting, stopping, or changing a medicine.
 
 How to work: call get_chart to read the chart, and call get_source for every source you rely on before you rely on it. You may call several tools in one turn, for example get_chart together with the sources you expect to need. When you have enough, call record_assessment once. If it is rejected, fix the listed problems and call it again.
 
@@ -231,7 +231,7 @@ async def grok_turn(client: httpx.AsyncClient, key: str, body: dict) -> dict:
             continue
         if response.status_code not in (429, 500, 502, 503, 504) or attempt == 2: break
         await asyncio.sleep(5 * (attempt + 1))
-    if response.is_error: raise RuntimeError(f"xAI {response.status_code}: {response.text[:200]}")
+    if response.is_error: raise RuntimeError(f"model service {response.status_code}: {response.text[:200]}")
     return response.json()
 
 async def review_patient(client: httpx.AsyncClient, key: str, gate: asyncio.Semaphore, person: dict, dossier: dict, question: str | None) -> tuple[dict | None, dict]:
@@ -274,7 +274,7 @@ def merge_review(rule: dict, review: dict | None, dossier: dict) -> dict:
     level = review["risk_level"] if review["risk_level"] in RISK_LEVELS else None
     checks = [str(check).strip() for check in review.get("clinician_checks") or [] if str(check).strip()]; note = ". ".join(checks)
     if not level and rule["risk_level"]:
-        return {**rule, "mismatches": review.get("mismatches") or rule["mismatches"], "clinician_checks": ["Model review did not rate this chart as a match", *checks][:3], "clinician_note": f"The model review did not rate this chart as a match. {note}".strip(), "assessed_by": "rules_floor"}
+        return {**rule, "mismatches": review.get("mismatches") or rule["mismatches"], "clinician_checks": ["Mishti did not rate this chart as a match", *checks][:3], "clinician_note": f"Mishti did not rate this chart as a match. {note}".strip(), "assessed_by": "rules_floor"}
     cited = {source for reason in review.get("reasons") or [] for source in reason.get("source_ids") or []}
     findings = [finding["finding_id"] for finding in dossier.get("findings") or [] if cited & set(finding.get("source_ids") or [])]
     return {"patient_id": rule["patient_id"], "display_name": rule["display_name"], "risk_level": level, "finding_ids": findings if level else [], "reasons": review.get("reasons") or [] if level else [], "mismatches": review.get("mismatches") or [] if level else [], "clinician_checks": checks if level else [], "clinician_note": note or None, "assessed_by": "agent"}
@@ -302,15 +302,15 @@ async def cohort_agent(dossier: dict, cohort: list[dict], question: str | None =
     footer = "Synthetic records. Sample sources, not a live PubMed search. Decision support, not a treatment recommendation." if placeholder else "Decision support from synthetic records; not a treatment recommendation."
     report = {"report_id": ident("rp"), "dossier_id": dossier["dossier_id"], "generated_at": now(), "placeholder": placeholder, "sections": report_sections(dossier, overlay), "footer": footer}
     matched = [patient for patient in overlay["patients"] if patient["risk_level"]]
-    prompt = ("You are the clinical evidence reviewer for a physician's patient panel. Write the panel report and a brief for a spoken assistant. Return JSON only with the keys title, question, supports (array of strings), does_not_support (array of strings), and voice_brief. "
+    prompt = ("You are Mishti, the clinical evidence reviewer for a physician's patient panel. Write the panel report and a brief for a spoken assistant. Return JSON only with the keys title, question, supports (array of strings), does_not_support (array of strings), and voice_brief. "
               "supports and does_not_support say what the dossier sources do and do not support for the flagged charts. voice_brief is 80 to 150 words the spoken assistant will use to walk the physician through the panel: the question, what the evidence supports and does not, and the pattern across the flagged charts. "
               "Speak about the flagged charts as a group. Never put a name or a patient ID in any text. Never prescribe. Use only this dossier and these assessments. "
               + json.dumps({"question": question, "dossier": {"sources": dossier.get("sources"), "findings": dossier.get("findings")}, "flagged": [{key: patient.get(key) for key in ("patient_id", "risk_level", "reasons", "mismatches", "clinician_note")} for patient in matched]}))
     summary = await grok_json(prompt, COHORT_MODEL, COHORT_TIMEOUT)
     if summary: report["model_summary"] = {key: summary.get(key) for key in ("title", "question", "supports", "does_not_support")}
-    else: report["footer"] += " The report summary is built-in text because the model did not respond."
+    else: report["footer"] += " The report summary is built-in text because Mishti did not respond."
     failed = overlay["assessment"]["rules_fallback"] + overlay["assessment"]["rules_only"]
-    if failed: report["footer"] += f" {failed} of {len(cohort)} charts were matched by rules only, without a model review."
+    if failed: report["footer"] += f" {failed} of {len(cohort)} charts were matched by rules only, without a review by Mishti."
     report["voice_brief"] = {"panel": (summary or {}).get("voice_brief") if isinstance((summary or {}).get("voice_brief"), str) else None, "patients": {patient["patient_id"]: reviews[patient["patient_id"]].get("voice_brief") for patient in matched if patient["assessed_by"] == "agent"}}
     report["note_briefs"] = {patient["patient_id"]: {"context": reviews[patient["patient_id"]].get("note_context"), "points": [{"text": reason["text"], "plain_language": reason.get("plain_language")} for reason in patient["reasons"]]} for patient in matched if patient["assessed_by"] == "agent"}
     return overlay, report, traces
@@ -338,7 +338,7 @@ async def personal_message_agent(patient: dict, instruction: str | None, previou
     if previous: prompt += " This is a rewrite of the draft below. Keep what fits the request above and drop everything else, including any medical content. Draft to rewrite: " + json.dumps(previous)
     model = await grok_json(prompt, NOTE_MODEL)
     # There are no points to fall back on, so a failed write is reported instead of filled with a template.
-    if not (model and {"subject", "body"} <= model.keys()): raise HTTPException(502, "The writer could not write this message." + (" Your text is unchanged." if previous else ""))
+    if not (model and {"subject", "body"} <= model.keys()): raise HTTPException(502, "Mishti could not write this message." + (" Your text is unchanged." if previous else ""))
     blocked = safety_blocks(model["body"], patient["id"])
     return {"draft_id": ident("dr"), "patient_id": patient["id"], "run_points": [], "personal": True, "model_draft": model, "edited_text": model["body"], "approved": False, "blocked_terms": blocked, "created_at": now()}
 
@@ -356,7 +356,7 @@ async def patient_message_agent(patient: dict, points: list[str], instruction: s
     if instruction and instruction.strip(): prompt += (" The physician asked for this change, and it comes before the length and layout given above: " + json.dumps(instruction.strip()) + " Do exactly that, counting sentences or words if it names a number. Ignore any part of it that would break the rules on medicines, advice, names, or studies.")
     model = await grok_json(prompt, NOTE_MODEL)
     # A failed rewrite must not replace the physician's text with the built-in template.
-    if previous and not (model and {"subject", "body"} <= model.keys()): raise HTTPException(502, "The writer could not rewrite this message. Your text is unchanged.")
+    if previous and not (model and {"subject", "body"} <= model.keys()): raise HTTPException(502, "Mishti could not rewrite this message. Your text is unchanged.")
     draft = model if model and {"subject", "body"} <= model.keys() else {"subject": "A message from your care team", "body": f"Hello {patient['name']},\n\nWe would like to discuss: {' '.join(points)}\n\nThis is a synthetic practice message."}
     blocked = [other["name"] for other in load_cohort() if other["id"] != patient["id"] and other["name"] in draft["body"]] + re.findall(r"PMID\s*\d+|\b(start|stop|double) taking\b", draft["body"], re.I)
     return {"draft_id": ident("dr"), "patient_id": patient["id"], "run_points": points, "model_draft": draft, "edited_text": draft["body"], "approved": False, "blocked_terms": blocked, "created_at": now()}
