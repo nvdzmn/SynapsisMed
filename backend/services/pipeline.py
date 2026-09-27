@@ -14,14 +14,13 @@ import httpx
 from fastapi import HTTPException
 from .pubmed import fetch_pubmed_abstracts
 from .synthea import load_synthea_csv
+from . import store
 
 ROOT = Path(__file__).parents[1]
-RUN_DIR = ROOT / "data" / "runs"
-RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 def now() -> str: return datetime.now(UTC).isoformat()
 def ident(prefix: str) -> str: return f"{prefix}_{uuid.uuid4().hex[:12]}"
-def load_cohort() -> list[dict]:
+def source_cohort() -> list[dict]:
     synthea = load_synthea_csv(ROOT / "data" / "synthea_csv")
     if synthea: return synthea
     raw = json.loads((ROOT / "data" / "clinic_cohort.json").read_text())
@@ -32,6 +31,9 @@ def load_cohort() -> list[dict]:
         # Deterministic demo-only enrichment where a Synthea export lacks a useful marker.
         if "asthma" in " ".join(patient["conditions"]).lower(): patient["metrics"].setdefault("Blood_Eosinophils", 360)
     return raw
+
+def seed_cohort() -> None: store.replace_patients(source_cohort())
+def load_cohort() -> list[dict]: return store.patients()
 
 def phenotype_bundle(cohort: list[dict]) -> dict:
     labels, bands, meds, ages, sexes = set(), set(), set(), set(), set()
@@ -49,11 +51,8 @@ def phenotype_bundle(cohort: list[dict]) -> dict:
         ages.add("40-54" if person["age"] < 55 else "55-64" if person["age"] < 65 else "65+"); sexes.add(person["gender"].lower())
     return {"phenotype_bundle_id": ident("pb"), "generated_at": now(), "conditions": sorted(filter(None, labels)), "biomarker_bands": sorted(bands), "medication_classes": sorted(filter(None, meds)), "age_bands": sorted(ages), "sexes_present": sorted(sexes)}
 
-def save_run(run: dict) -> None: (RUN_DIR / f"{run['run_id']}.json").write_text(json.dumps(run, indent=2))
-def get_run(run_id: str) -> dict:
-    path = RUN_DIR / f"{run_id}.json"
-    if not path.exists(): raise HTTPException(404, "Run not found")
-    return json.loads(path.read_text())
+def save_run(run: dict) -> None: store.save_run(run)
+def get_run(run_id: str) -> dict: return store.get_run(run_id)
 
 def safe_json(text: str) -> dict | None:
     try: return json.loads(re.sub(r"^```json\s*|\s*```$", "", text.strip()))

@@ -1,18 +1,16 @@
 """TrialLens backend API.  The browser consumes saved run view models only."""
 from __future__ import annotations
 
-import asyncio, json
+import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from services.pipeline import (approve_draft, cohort_agent, get_run, ident, literature_agent,
-                               load_cohort, now, patient_message_agent, phenotype_bundle, save_run)
+                               load_cohort, now, patient_message_agent, phenotype_bundle, save_run, seed_cohort)
 from services.xai import create_voice_secret
+from services import store
 
-ROOT = Path(__file__).parent
-DRAFT_DIR = ROOT / "data" / "drafts"; DRAFT_DIR.mkdir(parents=True, exist_ok=True)
 
 class DraftRequest(BaseModel):
     points: list[str] = Field(min_length=1)
@@ -31,6 +29,7 @@ async def scheduled_runs():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    store.initialize(); seed_cohort()
     task = asyncio.create_task(scheduled_runs())
     yield
     task.cancel()
@@ -92,12 +91,10 @@ async def draft_patient_message(run_id: str, patient_id: str, request: DraftRequ
     patient = next((p for p in load_cohort() if p["id"] == patient_id), None)
     if not patient: raise HTTPException(404, "Patient not found")
     draft = await patient_message_agent(patient, request.points, request.instruction)
-    draft["run_id"] = run_id; (DRAFT_DIR / f"{draft['draft_id']}.json").write_text(json.dumps(draft, indent=2)); run["audit"]["agent_4_drafts"].append({"draft_id": draft["draft_id"], "patient_id": patient_id, "created_at": now()}); save_run(run)
+    draft["run_id"] = run_id; store.save_draft(draft); run["audit"]["agent_4_drafts"].append({"draft_id": draft["draft_id"], "patient_id": patient_id, "created_at": now()}); save_run(run)
     return draft
 
 @app.post("/api/drafts/{draft_id}/approve")
 async def approve_patient_message(draft_id: str, request: ApproveRequest):
-    path = DRAFT_DIR / f"{draft_id}.json"
-    if not path.exists(): raise HTTPException(404, "Draft not found")
-    draft = approve_draft(json.loads(path.read_text()), request.final_text)
-    path.write_text(json.dumps(draft, indent=2)); return draft
+    draft = approve_draft(store.get_draft(draft_id), request.final_text)
+    store.save_draft(draft); return draft

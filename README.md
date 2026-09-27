@@ -26,6 +26,8 @@ Set `NEXT_PUBLIC_API_URL=http://localhost:8000` to enable live PubMed search and
 
 The `backend-agent-pipeline` branch adds the PRD backend contract. Start FastAPI from `backend/`, then call `POST /api/runs` (optionally multipart with `file`) and use `GET /api/runs/{run_id}` to render the completed graph/report view model. The API retains raw dossiers and the synthetic cohort server-side.
 
+Operational data is stored in `backend/data/triallens.db` using SQLite (patients, runs, drafts, and audit metadata). The file is created and seeded from the configured synthetic source when FastAPI starts; it is intentionally ignored by Git.
+
 To use a Synthea download, place its CSV export under `backend/data/synthea_csv/` with `patients.csv`, `conditions.csv`, `observations.csv`, and `medications.csv`. The adapter uses it automatically; absent demo-only biomarkers are deterministically marked/derived in code so a downloaded export can still drive the demo.
 
 Agent assignments for the demo are: Agent 1 uses a configurable OpenAI model (`OPENAI_MODEL`, default `gpt-4.1-mini`), Agent 2 and Agent 4 use Grok 4.7, and Agent 3 uses Grok Voice.
