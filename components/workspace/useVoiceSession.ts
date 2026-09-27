@@ -42,6 +42,8 @@ export function useVoiceSession(runId: string | null) {
     wsRef.current = null;
     streamRef.current = null;
     contextRef.current = null;
+    // A new session gets a new audio context whose clock starts at zero, so the schedule must too.
+    playhead.current = 0;
     setListening(false);
   };
 
@@ -49,7 +51,10 @@ export function useVoiceSession(runId: string | null) {
     const context = contextRef.current;
     if (!context) return;
     const raw = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-    const pcm = new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength / Int16Array.BYTES_PER_ELEMENT);
+    const sampleCount = Math.floor(raw.byteLength / Int16Array.BYTES_PER_ELEMENT);
+    if (sampleCount === 0) return;
+    // Drop a trailing odd byte rather than throwing away the whole chunk.
+    const pcm = new Int16Array(raw.buffer, raw.byteOffset, sampleCount);
     const buffer = context.createBuffer(1, pcm.length, 24000);
     const channel = buffer.getChannelData(0);
     for (let index = 0; index < pcm.length; index += 1) channel[index] = (pcm[index] ?? 0) / 32768;
@@ -66,15 +71,19 @@ export function useVoiceSession(runId: string | null) {
     setError("");
     setYou("");
     setReply("Requesting a voice session for this report…");
+    // Create and resume the audio context synchronously, inside the click that started voice.
+    // Safari only unlocks audio output from within a user gesture; doing this later leaves it silent.
+    const context = new AudioContext({ sampleRate: 24000 });
+    contextRef.current = context;
+    playhead.current = 0;
+    void context.resume();
     try {
       const session = await openVoiceSession(runId);
       const instructions = `You are SynapseMed, a spoken clinical evidence assistant. Discuss only this physician report. Do not search, draft, prescribe, or tell anyone to start or stop a medicine. Patient in focus: ${patientName}. ${session.brief} Keep answers concise.`;
       const ws = new WebSocket("wss://api.x.ai/v1/realtime?model=grok-voice-latest", [`xai-client-secret.${session.secret}`]);
       wsRef.current = ws;
       ws.onopen = async () => {
-        const context = new AudioContext({ sampleRate: 24000 });
-        contextRef.current = context;
-        await context.resume();
+        if (context.state !== "running") await context.resume();
         ws.send(
           JSON.stringify({
             type: "session.update",
