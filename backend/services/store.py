@@ -52,6 +52,12 @@ def latest_completed_run() -> dict | None:
         row = db.execute("SELECT payload FROM runs WHERE status = 'complete' ORDER BY created_at DESC LIMIT 1").fetchone()
     return json.loads(row["payload"]) if row else None
 
+def completed_runs(limit: int = 40) -> list[dict]:
+    initialize()
+    with connection() as db:
+        rows = db.execute("SELECT payload FROM runs WHERE status = 'complete' ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return [json.loads(row["payload"]) for row in rows]
+
 def get_run(run_id: str) -> dict:
     initialize()
     with connection() as db:

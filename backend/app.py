@@ -93,6 +93,35 @@ async def start_run(file: UploadFile | None = File(None), question: str | None =
     upload = extract_upload(file, await file.read()) if file and file.filename else None
     return public_run(await launch_run(upload, question, placeholder=(sample or "").lower() in {"1", "true", "yes"}))
 
+def short_label(text: str, limit: int = 88) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit: return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(".,;:")
+    return f"{cut or text[:limit]}…"
+
+def report_summary(run: dict) -> dict:
+    report = run.get("report") or {}
+    summary = report.get("model_summary") or {}
+    sections = report.get("sections") or {}
+    question = summary.get("question") if isinstance(summary.get("question"), str) else sections.get("question") or ""
+    raw_title = summary.get("title") if isinstance(summary.get("title"), str) and str(summary.get("title")).strip() else question
+    title = short_label(raw_title) if raw_title else "Panel report"
+    patients = (run.get("overlay") or {}).get("patients") or []
+    return {
+        "run_id": run.get("run_id"),
+        "created_at": run.get("created_at"),
+        "completed_at": run.get("completed_at"),
+        "title": title,
+        "question": question,
+        "review_count": sum(1 for patient in patients if patient.get("risk_level")),
+        "source_count": len(run.get("source_pack") or []),
+        "placeholder": bool(run.get("placeholder") or report.get("placeholder")),
+    }
+
+@app.get("/api/runs")
+async def list_runs():
+    return [report_summary(run) for run in store.completed_runs()]
+
 @app.get("/api/runs/latest")
 async def latest_run():
     run = latest_completed_run()

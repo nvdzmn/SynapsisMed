@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import type { ReportView } from "../../lib/triallens";
+import { useState, type ReactNode } from "react";
+import type { ReportHistoryItem, ReportView } from "../../lib/triallens";
 import { CONDITIONS, SUGGESTIONS, conditionSummary, levelColors, matchCountLabel, type PanelPatient, type Phase, type SourceNode } from "../../lib/workspace-data";
 
 type ReportPanelProps = {
@@ -19,6 +19,11 @@ type ReportPanelProps = {
   sources: SourceNode[];
   error: string;
   reviewCount: number;
+  browsing: boolean;
+  history: ReportHistoryItem[];
+  historyLoading: boolean;
+  historyError: string;
+  openingId: string | null;
   onQuery: (value: string) => void;
   onOpenSearch: () => void;
   onCloseSearch: () => void;
@@ -32,14 +37,112 @@ type ReportPanelProps = {
   onSelectPatient: (id: string) => void;
   onRetry: () => void;
   onOpenLast: () => void;
+  onShowHistory: () => void;
+  onOpenReport: (id: string) => void;
 };
 
 export default function ReportPanel(props: ReportPanelProps) {
-  const { phase, searchOpen } = props;
+  const { phase, searchOpen, browsing } = props;
   return (
     <div className="flex h-full flex-col gap-[18px] overflow-y-auto p-5">
       {searchOpen ? <SearchComposer {...props} /> : <SearchCollapsed onOpen={props.onOpenSearch} />}
-      {searchOpen ? <MinimizedReport phase={phase} report={props.report} reviewCount={props.reviewCount} cohortSize={props.cohortSize} onShow={props.onCloseSearch} /> : <ReportBody {...props} />}
+      {!searchOpen && !browsing ? (
+        <button type="button" onClick={props.onShowHistory} className="self-start text-[11px] font-semibold tracking-[0.055px] text-violet">
+          ← Reports
+        </button>
+      ) : null}
+      {browsing ? <HistoryList {...props} /> : searchOpen ? <MinimizedReport phase={phase} report={props.report} reviewCount={props.reviewCount} cohortSize={props.cohortSize} onShow={props.onCloseSearch} /> : <ReportBody {...props} />}
+    </div>
+  );
+}
+
+function formatStamp(iso?: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function HistoryList({ history, historyLoading, historyError, openingId, onOpenReport }: ReportPanelProps) {
+  return (
+    <section className="space-y-3">
+      <p className="text-[11px] tracking-[0.055px] text-muted">REPORTS</p>
+      {historyLoading ? (
+        <div className="space-y-2">
+          {["86%", "74%", "91%"].map((width) => (
+            <div key={width} className="h-14 animate-pulse rounded-lg bg-neutral-100" style={{ width }} />
+          ))}
+        </div>
+      ) : historyError ? (
+        <p className="rounded-lg border border-blocked-border bg-blocked-bg px-3.5 py-3 text-sm text-blocked-fg">{historyError}</p>
+      ) : history.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-line px-5 py-6 text-sm leading-5 text-secondary">
+          <p>No reports yet. Ask the panel a question to write the first one. The graph stays empty until you open a report.</p>
+        </div>
+      ) : (
+        <ul className="space-y-1.5">
+          {history.map((item) => {
+            const opening = openingId === item.run_id;
+            const when = formatStamp(item.completed_at || item.created_at);
+            const review = item.review_count === 1 ? "1 to review" : `${item.review_count} to review`;
+            const sources = item.source_count === 1 ? "1 source" : `${item.source_count} sources`;
+            return (
+              <li key={item.run_id}>
+                <button type="button" disabled={Boolean(openingId)} onClick={() => onOpenReport(item.run_id)} className="flex w-full flex-col gap-1 rounded-lg border border-line bg-surface px-3 py-2.5 text-left hover:border-violet disabled:opacity-60">
+                  <span className="text-sm font-semibold leading-5 text-ink">{item.title}</span>
+                  <span className="text-[11px] tracking-[0.055px] text-secondary">
+                    {[when, opening ? "Opening…" : review, sources, item.placeholder ? "Sample" : ""].filter(Boolean).join(" · ")}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function sourceHref(source: SourceNode): string {
+  if (source.url) return source.url;
+  if (source.pmid) return `https://pubmed.ncbi.nlm.nih.gov/${source.pmid}/`;
+  return "";
+}
+
+function SourcesDropdown({ sources }: { sources: SourceNode[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button type="button" aria-expanded={open} onClick={() => setOpen((current) => !current)} className="flex h-8 items-center gap-2 rounded-full border border-line bg-canvas px-3 text-[11px] tracking-[0.055px] text-muted">
+        <span className="font-medium text-ink">Sources</span>
+        <span>{sources.length}</span>
+        <span className={`text-secondary ${open ? "inline-block rotate-180" : ""}`}>▾</span>
+      </button>
+      {open ? (
+        <ul className="mt-2 space-y-0.5">
+          {sources.map((source) => {
+            const href = sourceHref(source);
+            const row = (
+              <>
+                <span className="shrink-0 font-mono text-xs font-medium text-secondary">{source.label}</span>
+                <span className="min-w-0 flex-1 truncate">{source.pmid ? `${source.citation} · PMID ${source.pmid}` : source.citation}</span>
+                {href ? <span className="shrink-0 text-accent">↗</span> : null}
+              </>
+            );
+            return (
+              <li key={source.id}>
+                {href ? (
+                  <a href={href} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] leading-4 tracking-[0.055px] text-ink hover:bg-canvas">
+                    {row}
+                  </a>
+                ) : (
+                  <p className="flex items-center gap-2 px-2 py-1.5 text-[11px] leading-4 tracking-[0.055px] text-ink">{row}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -219,6 +322,7 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
         <p className="text-[11px] tracking-[0.055px] text-muted">{report?.kicker || "PANEL REPORT"}</p>
         <h2 className="font-display text-lg font-semibold leading-[26px] tracking-[-0.09px] text-ink">{report?.title || "Panel report"}</h2>
       </header>
+      {sources.length > 0 ? <SourcesDropdown sources={sources} /> : null}
       {report?.placeholder && <Caution text="Sample report. The sources are fixed landmark trials, not a live PubMed search. The write-up is from Grok." />}
       <Caution text={report?.placeholder ? "Synthetic records. Decision support, not a treatment recommendation." : report?.footer} />
       <Section index="1" title="THE QUESTION THIS RUN ASKED">
@@ -239,7 +343,7 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
         ))}
       </Section>
       <section className="space-y-1.5">
-        <h3 className="text-xs font-medium tracking-[0.06px] text-accent">4&nbsp;&nbsp;PATIENTS TO REVIEW</h3>
+        <h3 className="text-xs font-bold tracking-[0.06px] text-violet">4&nbsp;&nbsp;PATIENTS TO REVIEW</h3>
         {phase === "empty" || reviewCount === 0 ? (
           <div className="rounded-lg border border-cleared-border bg-cleared-bg px-3.5 py-3">
             <p className="text-sm font-semibold text-cleared-fg">✓ No patients to review this run</p>
@@ -263,22 +367,6 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
           })
         )}
       </section>
-      <section className="space-y-1.5">
-        <h3 className="text-xs font-medium tracking-[0.06px] text-accent">5&nbsp;&nbsp;SOURCES</h3>
-        {sources.map((source) => (
-          <div key={source.id} className="flex items-center justify-between gap-3 text-[11px] leading-4">
-            <p className="min-w-0 text-ink">
-              <span className="mr-2 font-mono text-xs font-medium text-secondary">{source.label}</span>
-              <span className="tracking-[0.055px]">{source.pmid ? `${source.citation} · PMID ${source.pmid}` : source.citation}</span>
-            </p>
-            {source.pmid ? (
-              <a className="shrink-0 tracking-[0.055px] text-accent" href={`https://pubmed.ncbi.nlm.nih.gov/${source.pmid}/`} target="_blank" rel="noreferrer">
-                PubMed ↗
-              </a>
-            ) : null}
-          </div>
-        ))}
-      </section>
     </>
   );
 }
@@ -286,7 +374,7 @@ function ReadyReport({ phase, selectedId, onSelectPatient, report, patients, sou
 function Section({ index, title, children }: { index: string; title: string; children: ReactNode }) {
   return (
     <section className="space-y-1.5">
-      <h3 className="text-xs font-medium tracking-[0.06px] text-accent">
+      <h3 className="text-xs font-bold tracking-[0.06px] text-violet">
         {index}&nbsp;&nbsp;{title}
       </h3>
       {children}

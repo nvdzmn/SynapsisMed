@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CONDITIONS, DEFAULT_QUERY, blockedReasons, type Phase } from "../../lib/workspace-data";
-import { approveDraft, cohortLabel, createDraft, fetchHealth, formatWhen, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type RunView } from "../../lib/triallens";
+import { approveDraft, cohortLabel, createDraft, fetchHealth, formatWhen, listRuns, presentRun, readLatestRun, readRun, startLiteratureRun, type PresentedRun, type ReportHistoryItem, type RunView } from "../../lib/triallens";
 import CohortField from "./CohortField";
 import NoteDrawer from "./NoteDrawer";
 import ReportPanel, { ConditionMenu } from "./ReportPanel";
@@ -46,6 +46,11 @@ export default function Workspace() {
   const [drafting, setDrafting] = useState(false);
   const [sending, setSending] = useState(false);
   const [noteError, setNoteError] = useState("");
+  const [browsing, setBrowsing] = useState(true);
+  const [history, setHistory] = useState<ReportHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachedFile = useRef<File | null>(null);
   const pollTimer = useRef<number | null>(null);
@@ -57,6 +62,17 @@ export default function Workspace() {
   const approved = Boolean(patient) && approvedFor === `${patient?.id}:${draftText}` && reasons.length === 0 && !drafting;
   const graphReady = phase === "ready";
 
+  const loadHistory = async () => {
+    try {
+      setHistory(await listRuns());
+      setHistoryError("");
+    } catch (cause) {
+      setHistoryError(cause instanceof Error && cause.message ? cause.message : "Could not load past reports");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void fetchHealth()
       .then((size) => {
@@ -64,6 +80,7 @@ export default function Workspace() {
         setCohortSize(size);
       })
       .catch(() => setCohortSize(null));
+    void loadHistory();
     return () => {
       if (pollTimer.current) window.clearTimeout(pollTimer.current);
     };
@@ -88,7 +105,7 @@ export default function Workspace() {
     return () => window.removeEventListener("keydown", onKey);
   }, [conditionOpen, patientsOpen, searchOpen, noteOpen, focus, graphReady, voice]);
 
-  const applyView = (view: RunView) => {
+  const applyView = (view: RunView, focusPatient = true) => {
     setProgress(view.progress ?? []);
     setNames((view.overlay?.patients ?? []).map((item) => item.display_name));
     if (view.status === "failed") {
@@ -111,7 +128,43 @@ export default function Workspace() {
     setError("");
     setPhase(next.patients.length ? "ready" : "empty");
     setSelectedId(next.patients[0]?.id ?? null);
-    setFocus(next.patients.length ? "patient" : null);
+    setFocus(focusPatient && next.patients.length ? "patient" : null);
+  };
+
+  const showHistory = () => {
+    if (phase === "running") return;
+    voice.stop();
+    setNoteOpen(false);
+    setSearchOpen(false);
+    setConditionOpen(false);
+    setPatientsOpen(false);
+    setFocus(null);
+    setPresented(null);
+    setSelectedId(null);
+    setRunId(null);
+    setProgress([]);
+    setCompletedAt(null);
+    setError("");
+    setPhase("idle");
+    setBrowsing(true);
+    void loadHistory();
+  };
+
+  const openReport = async (id: string) => {
+    setOpeningId(id);
+    setSearchOpen(false);
+    setConditionOpen(false);
+    setPatientsOpen(false);
+    setNoteOpen(false);
+    try {
+      const view = await readRun(id);
+      applyView(view, false);
+      setBrowsing(false);
+    } catch (cause) {
+      setHistoryError(cause instanceof Error && cause.message ? cause.message : "Could not open that report");
+    } finally {
+      setOpeningId(null);
+    }
   };
 
   const startRun = async (sample = false) => {
@@ -123,6 +176,7 @@ export default function Workspace() {
     setNoteOpen(false);
     setFocus(null);
     setPresented(null);
+    setBrowsing(false);
     setPhase("running");
     setError("");
     setProgress(["phenotype_complete"]);
@@ -134,7 +188,10 @@ export default function Workspace() {
       const tick = async () => {
         const view = await readRun(started.run_id);
         applyView(view);
-        if (view.status === "complete" || view.status === "failed") return;
+        if (view.status === "complete" || view.status === "failed") {
+          void loadHistory();
+          return;
+        }
         pollTimer.current = window.setTimeout(() => void tick(), 1200);
       };
       await tick();
@@ -335,6 +392,11 @@ export default function Workspace() {
               sources={presented?.sources ?? []}
               error={error}
               reviewCount={reviewCount}
+              browsing={browsing}
+              history={history}
+              historyLoading={historyLoading}
+              historyError={historyError}
+              openingId={openingId}
               onQuery={setQuery}
               onOpenSearch={() => {
                 setSearchOpen(true);
@@ -363,6 +425,8 @@ export default function Workspace() {
                 setFocus("patient");
               }}
               onRetry={() => void startRun()}
+              onShowHistory={showHistory}
+              onOpenReport={(id) => void openReport(id)}
               onOpenLast={() => {
                 void (async () => {
                   const cached = lastPresented && lastRunId ? { presented: lastPresented, runId: lastRunId } : null;
